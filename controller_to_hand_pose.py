@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Convert UMI controller poses to validated frame-local hand-pose deltas.
+"""Convert UMI controller poses to validated frame-local robot EEF deltas.
 
 The built-in calibration is the measured v3 controller-to-hand transform:
 local +X points forward, local +Z points up, and +Y = Z cross X.  For each
-hand, the output stores ``inverse(T_hand_previous) * T_hand_current``.
+hand, the canonical delta is ``inverse(T_hand_previous) * T_hand_current``.
+By default it is conjugated into the Quanta X2 + Revo2 EEF frame, so replay is
+directly ``T_target[t] = T_target[t-1] * D_robot[t]``.  Canonical v3 output
+remains available through ``--target-frame-profile canonical-v3``.
 
 The script accepts either one CSV file or a dataset root.  Dataset mode finds
 inputs with a configurable glob and writes one output next to every input (or
@@ -79,6 +82,10 @@ DEFAULT_CALIBRATION: dict[str, dict[str, list[float]]] = {
 
 IDENTITY_VALUES = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
 Q_UMI_TO_ROS: Quaternion = (0.5, -0.5, -0.5, 0.5)
+TARGET_FRAME_X_DEGREES = {
+    "x2-revo2": {"left": 90.0, "right": -90.0},
+    "canonical-v3": {"left": 0.0, "right": 0.0},
+}
 
 
 @dataclass(frozen=True)
@@ -178,6 +185,15 @@ def parse_args() -> argparse.Namespace:
         help="输出坐标基；默认 ros: (x,y,z)=(-z,-x,y)_UMI",
     )
     parser.add_argument(
+        "--target-frame-profile",
+        choices=tuple(TARGET_FRAME_X_DEGREES),
+        default="x2-revo2",
+        help=(
+            "输出增量坐标系；默认 x2-revo2 可直接右乘到机器人 EEF，"
+            "canonical-v3 保留机器人无关坐标"
+        ),
+    )
+    parser.add_argument(
         "--calibration-json",
         type=Path,
         help="自定义左右手 origin_mm/forward_mm/up_mm 标定 JSON",
@@ -227,6 +243,22 @@ def quaternion_multiply(a: Sequence[float], b: Sequence[float]) -> Quaternion:
 
 def quaternion_conjugate(q: Sequence[float]) -> Quaternion:
     return (-q[0], -q[1], -q[2], q[3])
+
+
+def x_rotation_quaternion(angle_degrees: float) -> Quaternion:
+    half_angle = math.radians(angle_degrees) * 0.5
+    return (math.sin(half_angle), 0.0, 0.0, math.cos(half_angle))
+
+
+def target_frame_rotations(profile: str) -> dict[str, Quaternion]:
+    try:
+        angles = TARGET_FRAME_X_DEGREES[profile]
+    except KeyError as exc:
+        raise ValueError(f"unknown target frame profile: {profile}") from exc
+    return {
+        side: x_rotation_quaternion(angles[side])
+        for side in ("left", "right")
+    }
 
 
 def rotate_vector(q: Sequence[float], vector: Sequence[float]) -> Vector3:
@@ -317,6 +349,21 @@ def relative_pose(previous: Pose, current: Pose) -> Pose:
     if quaternion[3] < 0.0:
         quaternion = tuple(-value for value in quaternion)  # type: ignore[assignment]
     return Pose(current.timestamp_ns, position, quaternion)
+
+
+def redefine_local_delta(delta: Pose, frame_rotation: Quaternion) -> Pose:
+    """Return inverse(X) @ D @ X for a pure-rotation frame definition X."""
+    inverse_frame = quaternion_conjugate(frame_rotation)
+    position = rotate_vector(inverse_frame, delta.position)
+    quaternion = normalize_quaternion(
+        quaternion_multiply(
+            quaternion_multiply(inverse_frame, delta.quaternion),
+            frame_rotation,
+        )
+    )
+    if quaternion[3] < 0.0:
+        quaternion = tuple(-value for value in quaternion)  # type: ignore[assignment]
+    return Pose(delta.timestamp_ns, position, quaternion)
 
 
 def calibration_point(
@@ -468,16 +515,25 @@ def mapped_hand_frames(
     return mapped
 
 
-def delta_fields(previous: Pose | None, current: Pose | None) -> tuple[list[str | int], int]:
+def delta_fields(
+    previous: Pose | None,
+    current: Pose | None,
+    frame_rotation: Quaternion,
+) -> tuple[list[str | int], int]:
     valid = previous is not None and current is not None
     values = IDENTITY_VALUES
     if valid:
         delta = relative_pose(previous, current)  # type: ignore[arg-type]
+        delta = redefine_local_delta(delta, frame_rotation)
         values = (*delta.position, *delta.quaternion)
     return [int(valid), *(format(value, ".17g") for value in values)], int(valid)
 
 
-def stage_output(target: Path, frames: list[Frame]) -> tuple[Path, dict[str, Any]]:
+def stage_output(
+    target: Path,
+    frames: list[Frame],
+    frame_rotations: dict[str, Quaternion],
+) -> tuple[Path, dict[str, Any]]:
     temporary_name: str | None = None
     valid_counts = {"left": 0, "right": 0}
     try:
@@ -500,10 +556,14 @@ def stage_output(target: Path, frames: list[Frame]) -> tuple[Path, dict[str, Any
                     current.timestamp_ns - previous.timestamp_ns if previous is not None else ""
                 )
                 left_fields, left_valid = delta_fields(
-                    previous.left if previous is not None else None, current.left
+                    previous.left if previous is not None else None,
+                    current.left,
+                    frame_rotations["left"],
                 )
                 right_fields, right_valid = delta_fields(
-                    previous.right if previous is not None else None, current.right
+                    previous.right if previous is not None else None,
+                    current.right,
+                    frame_rotations["right"],
                 )
                 valid_counts["left"] += left_valid
                 valid_counts["right"] += right_valid
@@ -519,7 +579,7 @@ def stage_output(target: Path, frames: list[Frame]) -> tuple[Path, dict[str, Any
                 )
         stage = Path(temporary_name)
         os.chmod(stage, 0o644)
-        metrics = validate_output(stage, frames)
+        metrics = validate_output(stage, frames, frame_rotations)
         if metrics["left_valid_deltas"] != valid_counts["left"]:
             raise ValueError("left valid-delta count changed during validation")
         if metrics["right_valid_deltas"] != valid_counts["right"]:
@@ -547,7 +607,11 @@ def quaternion_error(a: Sequence[float], b: Sequence[float]) -> float:
     return 2.0 * math.acos(max(-1.0, min(1.0, value)))
 
 
-def validate_output(path: Path, mapped: list[Frame]) -> dict[str, Any]:
+def validate_output(
+    path: Path,
+    mapped: list[Frame],
+    frame_rotations: dict[str, Quaternion],
+) -> dict[str, Any]:
     with path.open("r", encoding="utf-8", newline="") as stream:
         reader = csv.DictReader(stream)
         if tuple(reader.fieldnames or ()) != OUTPUT_COLUMNS:
@@ -591,7 +655,14 @@ def validate_output(path: Path, mapped: list[Frame]) -> dict[str, Any]:
                 continue
 
             valid_counts[side] += 1
-            reconstructed = compose_pose(previous_pose, delta)  # type: ignore[arg-type]
+            canonical_delta = redefine_local_delta(
+                delta,
+                quaternion_conjugate(frame_rotations[side]),
+            )
+            reconstructed = compose_pose(  # type: ignore[arg-type]
+                previous_pose,
+                canonical_delta,
+            )
             position_error = math.sqrt(
                 sum(
                     (actual - expected) ** 2
@@ -717,6 +788,7 @@ def main() -> int:
         raise ValueError("--expected-count must be positive")
 
     calibration = load_calibration(args.calibration_json)
+    frame_rotations = target_frame_rotations(args.target_frame_profile)
     offsets = {
         side: hand_offset(calibration, side, args.coordinate_mode)
         for side in ("left", "right")
@@ -725,7 +797,7 @@ def main() -> int:
     print(
         f"{'执行' if args.execute else '预览'}：发现 {discovered_count} 个输入，"
         f"计划处理 {len(jobs)} 个，跳过已有输出 {len(skipped_existing)} 个，"
-        f"输出名 {args.output_name}"
+        f"输出名 {args.output_name}，target_frame={args.target_frame_profile}"
     )
     if args.verbose:
         for job in jobs:
@@ -745,7 +817,7 @@ def main() -> int:
             job.target.parent.mkdir(parents=True, exist_ok=True)
             frames, schema = load_frames(job.source, args)
             mapped = mapped_hand_frames(frames, offsets, args.coordinate_mode)
-            stage, metrics = stage_output(job.target, mapped)
+            stage, metrics = stage_output(job.target, mapped, frame_rotations)
             stages.append((stage, job.target))
             results.append(
                 JobResult(
@@ -776,7 +848,11 @@ def main() -> int:
         stages.clear()
 
         report = {
-            "schema_version": "umi.hand_pose.relative.v3.measured_flange_forward_up",
+            "schema_version": (
+                "umi.hand_pose.relative.x2_revo2.v1"
+                if args.target_frame_profile == "x2-revo2"
+                else "umi.hand_pose.relative.v3.measured_flange_forward_up"
+            ),
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "root": os.fspath(root),
             "input_glob": args.input_glob,
@@ -784,6 +860,11 @@ def main() -> int:
             "discovered_input_count": discovered_count,
             "skipped_existing": [os.fspath(job.target) for job in skipped_existing],
             "coordinate_mode": args.coordinate_mode,
+            "target_frame_profile": args.target_frame_profile,
+            "frame_redefinition": {
+                side: f"Rx({TARGET_FRAME_X_DEGREES[args.target_frame_profile][side]:+g} deg)"
+                for side in ("left", "right")
+            },
             "controller_to_hand_calibration_native_umi_mm": calibration,
             "axis_definition": {
                 "x": "normalize(forward_mm - origin_mm)",
@@ -791,7 +872,14 @@ def main() -> int:
                 "z": "normalize(x cross y)",
             },
             "relative_transform": "inverse(T_hand_previous) * T_hand_current",
-            "translation_frame": "previous hand local frame",
+            "robot_delta_transform": "inverse(X_side) * D_canonical * X_side",
+            "replay_composition": "T_target[t] = T_target[t-1] * D_output[t]",
+            "initial_anchor": "sdk_home or current robot EEF; not stored in this delta CSV",
+            "translation_frame": (
+                "previous X2+Revo2 robot EEF local frame"
+                if args.target_frame_profile == "x2-revo2"
+                else "previous canonical v3 hand local frame"
+            ),
             "translation_unit": "metre",
             "quaternion_order": "xyzw",
             "invalid_delta": "identity transform with relative_valid=0",
