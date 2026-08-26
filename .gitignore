@@ -1,0 +1,4 @@
+.replay_cache/
+replay_videos/
+__pycache__/
+*.py[cod]
