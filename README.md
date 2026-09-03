@@ -2,6 +2,8 @@
 
 用于整理 UMI 原始数据、生成末端增量、审核 RGB、转换 LeRobot 数据，以及在 RTX 5090 上回放。
 
+[查看当前仓库的简明概览、数据契约与已知缺口](REPOSITORY_SUMMARY.md)。
+
 ## 目录
 
 ```text
