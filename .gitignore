@@ -2,3 +2,8 @@
 replay_videos/
 __pycache__/
 *.py[cod]
+real_robot_data_collection/deploy/*.env
+!real_robot_data_collection/deploy/*.env.example
+real_robot_data_collection/**/sol_data_collection/
+real_robot_data_collection/**/*.log
+real_robot_data_collection/**/*.pid

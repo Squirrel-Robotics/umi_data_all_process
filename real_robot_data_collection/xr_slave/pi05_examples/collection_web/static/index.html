@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f3f4f6" />
+    <meta
+      name="description"
+      content="XR Quanta X2 Pi0.5 单屏数据采集控制台"
+    />
+    <title>XR Pi0.5 数据采集</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div id="appView" class="app-shell">
+      <header class="topbar">
+        <div class="page-title">XR Pi0.5 数据采集</div>
+        <div class="topbar-actions">
+          <div id="connectionBadge" class="status-pill neutral">
+            <span class="status-dot"></span>
+            <span>正在连接</span>
+          </div>
+          <time id="serverClock">--:--:--</time>
+        </div>
+      </header>
+
+      <section class="runbar panel">
+        <div class="episode-block">
+          <span class="field-label">Episode</span>
+          <strong id="episodeId">—</strong>
+          <span id="stateBadge" class="state-badge">正在连接</span>
+        </div>
+
+        <label class="task-field" for="taskName">
+          <span class="field-label">任务名称</span>
+          <input
+            id="taskName"
+            type="text"
+            maxlength="100"
+            value="Put the object on the box, then take it down."
+            autocomplete="off"
+          />
+        </label>
+
+        <div class="run-metrics">
+          <div>
+            <span>时长</span>
+            <strong id="duration">00:00.0</strong>
+          </div>
+          <div>
+            <span>10 Hz 帧</span>
+            <strong id="frames10Hz">0</strong>
+          </div>
+          <div>
+            <span>50-step 窗口</span>
+            <strong id="horizonWindows">0</strong>
+          </div>
+        </div>
+
+        <div id="alignmentCard" class="alignment-card neutral">
+          <div class="alignment-status">
+            <span>对齐状态</span>
+            <strong id="alignmentTitle">等待数据</strong>
+          </div>
+          <p id="alignmentSummary">开始预检后显示 9 路数据的在线状态。</p>
+          <dl>
+            <div>
+              <dt>共同覆盖</dt>
+              <dd id="commonDuration">0.00 s</dd>
+            </div>
+            <div>
+              <dt>无 Action 前缀</dt>
+              <dd id="uncoveredPrefix">—</dd>
+            </div>
+          </dl>
+        </div>
+
+        <div class="control-buttons">
+          <button id="startButton" class="button primary" type="button">
+            开始预检
+          </button>
+          <button id="recordButton" class="button primary" type="button" disabled>
+            开始采集
+          </button>
+          <button id="stopButton" class="button secondary" type="button" disabled>
+            停止本条
+          </button>
+          <button id="saveButton" class="button save" type="button" disabled>
+            保存本条
+          </button>
+          <button id="discardButton" class="button danger" type="button" disabled>
+            删除本条
+          </button>
+          <button id="closeButton" class="button close" type="button" disabled>
+            关闭数采
+          </button>
+        </div>
+
+        <p id="runMessage" class="run-message">
+          准备机器人和 VR 遥操，然后开始预检。
+        </p>
+        <p class="safety-note">停止采集不是机器人急停</p>
+      </section>
+
+      <section class="flowbar panel" aria-labelledby="flowTitle">
+        <div class="flow-heading">
+          <span class="field-label">采集流程</span>
+          <strong id="flowTitle">当前：准备设备</strong>
+        </div>
+        <ol id="collectionFlow" class="collection-flow">
+          <li class="flow-step active" data-flow-stage="prepare">
+            <span class="flow-index">01</span>
+            <span><strong>准备设备</strong><small>E6 · 双腕 · Revo2</small></span>
+          </li>
+          <li class="flow-step" data-flow-stage="preflight">
+            <span class="flow-index">02</span>
+            <span><strong>开始预检</strong><small>启动数据监听</small></span>
+          </li>
+          <li class="flow-step" data-flow-stage="monitor">
+            <span class="flow-index">03</span>
+            <span><strong>数据监测</strong><small>9 路状态正常</small></span>
+          </li>
+          <li class="flow-step" data-flow-stage="record">
+            <span class="flow-index">04</span>
+            <span><strong>Episode 采集</strong><small>记录有效区间</small></span>
+          </li>
+          <li class="flow-step" data-flow-stage="review">
+            <span class="flow-index">05</span>
+            <span><strong>保存或删除</strong><small>处理当前 Episode</small></span>
+          </li>
+          <li class="flow-step" data-flow-stage="close">
+            <span class="flow-index">06</span>
+            <span><strong>关闭数采</strong><small>停止全部监听</small></span>
+          </li>
+        </ol>
+      </section>
+
+      <main class="workspace">
+        <section class="camera-panel panel">
+          <div class="panel-title">
+            <strong>三路相机</strong>
+            <span id="cameraPreviewInfo">
+              E6 右目 60 Hz + 双腕 30 Hz · E6 预览约 1 FPS
+            </span>
+          </div>
+
+          <div class="camera-grid">
+            <article class="camera-card head-camera">
+              <div class="camera-viewport">
+                <img
+                  id="camera-head_rgb_stream"
+                  alt="E6 头环物理右目实时预览"
+                  decoding="async"
+                  draggable="false"
+                />
+                <div class="camera-empty">等待 E6 物理右目</div>
+              </div>
+              <div class="camera-meta">
+                <strong>E6 头环 · 物理右目 H.265</strong>
+                <span id="cameraInfo-head_rgb_stream">0 帧 · — Hz</span>
+              </div>
+            </article>
+
+            <article class="camera-card">
+              <div class="camera-viewport">
+                <img
+                  id="camera-left_arm_rgb_stream"
+                  alt="左腕鱼眼相机实时画面"
+                  decoding="async"
+                  draggable="false"
+                />
+                <div class="camera-empty">等待左腕鱼眼相机</div>
+              </div>
+              <div class="camera-meta">
+                <strong>左腕鱼眼 · MJPEG 640×480@30</strong>
+                <span id="cameraInfo-left_arm_rgb_stream">0 帧 · — Hz</span>
+              </div>
+            </article>
+
+            <article class="camera-card">
+              <div class="camera-viewport">
+                <img
+                  id="camera-right_arm_rgb_stream"
+                  alt="右腕鱼眼相机实时画面"
+                  decoding="async"
+                  draggable="false"
+                />
+                <div class="camera-empty">等待右腕鱼眼相机</div>
+              </div>
+              <div class="camera-meta">
+                <strong>右腕鱼眼 · MJPEG 640×480@30</strong>
+                <span id="cameraInfo-right_arm_rgb_stream">0 帧 · — Hz</span>
+              </div>
+            </article>
+          </div>
+
+          <div class="lower-info">
+            <section class="recent-panel compact-panel">
+              <div class="subhead">最近保存</div>
+              <div id="recentEpisodes" class="recent-list"></div>
+            </section>
+
+            <section class="system-panel compact-panel">
+              <div class="subhead">XR 资源</div>
+              <div class="system-metrics">
+                <div>
+                  <span>磁盘可用</span>
+                  <strong id="diskFree">—</strong>
+                </div>
+                <div>
+                  <span>内存可用</span>
+                  <strong id="memoryFree">—</strong>
+                </div>
+                <div>
+                  <span>Swap 已用</span>
+                  <strong id="swapUsed">—</strong>
+                </div>
+                <div>
+                  <span>保存格式</span>
+                  <strong>Raw Topics</strong>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="topics-panel panel">
+          <div class="panel-title">
+            <strong>9 路数据健康状态</strong>
+            <div class="legend">
+              <span><i class="legend-dot ok"></i>正常</span>
+              <span><i class="legend-dot warn"></i>关注</span>
+              <span><i class="legend-dot bad"></i>异常</span>
+            </div>
+          </div>
+
+          <p class="topics-note">
+            此处只显示数据流是否就绪；采集频率、时间戳和原始值仍在后台检查并保存。
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <colgroup>
+                <col class="col-topic" />
+                <col class="col-type" />
+                <col class="col-status" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>数据流</th>
+                  <th>类型</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="topicTable"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="recordingDialog">
+      <form method="dialog" class="review-dialog">
+        <h2>正式采集已开始</h2>
+        <p>9 路数据的有效起点已经记录，现在可以执行任务动作。</p>
+        <div class="review-warnings">
+          <div class="review-warning">
+            关闭本提示不会停止采集；完成任务后点击页面上的“停止采集”。
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button class="button primary" value="default" autofocus>
+            知道了，执行任务
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="reviewDialog">
+      <form method="dialog" class="review-dialog">
+        <h2>采集已停止，是否保存？</h2>
+        <p id="reviewSummary">请确认在线对齐情况，再选择保存或删除。</p>
+        <div id="reviewWarnings" class="review-warnings"></div>
+        <div class="dialog-actions">
+          <button id="dialogDiscard" class="button danger" value="cancel">
+            删除
+          </button>
+          <button id="dialogSave" class="button save" value="default">
+            保存
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="saveSuccessDialog">
+      <form method="dialog" class="review-dialog">
+        <h2>Episode 保存成功</h2>
+        <p id="saveSuccessSummary">数据已经完整落盘并通过校验。</p>
+        <div class="review-warnings">
+          <div id="saveSuccessState" class="review-warning">
+            正在预检下一条数据流，请稍候…
+          </div>
+        </div>
+        <div class="dialog-actions">
+          <button class="button secondary" value="cancel">
+            稍后开始
+          </button>
+          <button
+            id="saveSuccessNext"
+            class="button primary"
+            type="button"
+            disabled
+          >
+            等待下一条预检
+          </button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status"></div>
+  </body>
+</html>

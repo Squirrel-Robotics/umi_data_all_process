@@ -1,0 +1,19 @@
+[Unit]
+Description=XR Pi0.5 E6 Data Collection Web
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/xr/pi05/sdk_robot/examples
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/xr/.config/xr-real-data-collection.env
+Environment=E6_RIGHT_VIDEO_TOPIC=/teleoperation/master/video2/frame_image
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash >/dev/null 2>&1 && exec /home/xr/robocontrol_ws/.venv/bin/python -u /home/xr/pi05/sdk_robot/examples/collection_web/server.py --host 0.0.0.0 --port 8000 --examples-dir /home/xr/pi05/sdk_robot/examples --output-dir /home/xr/pi05/sdk_robot/examples/sol_data_collection/task6 --robot-server localhost:50051 --cooldown-seconds 10'
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=120
+
+[Install]
+WantedBy=default.target

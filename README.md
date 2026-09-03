@@ -2,6 +2,9 @@
 
 用于整理 UMI 原始数据、生成末端增量、审核 RGB、转换 LeRobot 数据，以及在 RTX 5090 上回放。
 
+XR 真机数采端、VR 板机到 Revo2 灵巧手的映射与部署说明见
+[`real_robot_data_collection/`](real_robot_data_collection/README.md)。
+
 ## 目录
 
 ```text

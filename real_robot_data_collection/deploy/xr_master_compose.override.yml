@@ -1,0 +1,21 @@
+services:
+  xr_vr_driver:
+    command:
+      - bash
+      - -i
+      - -c
+      - >-
+        sleep 5 && source /opt/xr/bot/setup.bash &&
+        ros2 launch
+        /opt/xr/config/revo2_vr_bridge/vr_driver_no_side_pause.launch.py
+
+  databridge:
+    command:
+      - bash
+      - -i
+      - -c
+      - >-
+        source /opt/xr/bot/setup.bash &&
+        ros2 run databridge databridge --ros-args
+        -r /joy_trigger/state/left:=/revo2/joy_trigger_no_pause/left
+        -r /joy_trigger/state/right:=/revo2/joy_trigger_no_pause/right
