@@ -60,7 +60,9 @@ reset、重启 `com.ssnwt.e6stream.debug`，并重新建立 TCP 端口转发。�
 
 为了允许非 root 的网页服务只重置指定头环，需要先安装仓库中的
 `xr_slave/udev/99-e6-adb.rules`，将其中的占位值替换为实际 `E6_SERIAL`，
-然后重载规则并重新插拔一次 E6。规则不会向网页服务开放其他 USB 设备。
+然后重载规则并重新插拔一次 E6。规则不会向网页服务开放其他 USB 设备；
+它还会取消 Ubuntu 针对 `05c6:f000` 的通用调制解调器
+`usb_modeswitch`，避免干扰该 E6 从 KONA-MTP 阶段进入 Android/ADB。
 
 ## XR 运行
 

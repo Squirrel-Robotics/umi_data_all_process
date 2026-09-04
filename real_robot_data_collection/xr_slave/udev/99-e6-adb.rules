@@ -2,4 +2,7 @@
 SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="4ee2", ATTR{serial}=="REPLACE_WITH_E6_SERIAL", OWNER:="xr", GROUP:="xr", MODE:="0660"
 # The same headset can enumerate as KONA-MTP before ADB is available.  Access
 # is required so the web recovery button can issue one targeted USB reset.
-SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", ATTR{idProduct}=="f000", ATTR{serial}=="REPLACE_WITH_E6_SERIAL", OWNER:="xr", GROUP:="xr", MODE:="0660"
+# Ubuntu's generic 40-usb_modeswitch rule treats every 05c6:f000 device as a
+# cellular modem.  Replace that RUN list with a final no-op for this exact
+# headset so it is not switched away from its Android boot path.
+SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", ATTR{idProduct}=="f000", ATTR{serial}=="REPLACE_WITH_E6_SERIAL", RUN:="/usr/bin/true", OWNER:="xr", GROUP:="xr", MODE:="0660"

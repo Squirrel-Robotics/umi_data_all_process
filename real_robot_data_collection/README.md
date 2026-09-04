@@ -97,7 +97,8 @@ X2 从机：
 4. 将用户级 `sol-collection-web.service` 安装到 `~/.config/systemd/user/`，在 `~/.config/xr-real-data-collection.env` 填入 E6 和 ROS bridge 配置后重载并启动。
 5. 将 `xr_slave/udev/99-e6-adb.rules` 中的占位序列号替换为实际
    `E6_SERIAL`，安装到 `/etc/udev/rules.d/` 后重载 udev，并重新插拔一次
-   E6。规则只向 `xr` 用户开放该序列号的 ADB 模式和 KONA-MTP 恢复模式。
+   E6。规则只向 `xr` 用户开放该序列号的 ADB 模式和 KONA-MTP 恢复模式，
+   并取消 Ubuntu 对该头环误触发的通用 `usb_modeswitch`。
 6. 通过 `http://<XR_SLAVE_IP>:8000/` 进入数采 Web 界面。
 
 ## 验证顺序
