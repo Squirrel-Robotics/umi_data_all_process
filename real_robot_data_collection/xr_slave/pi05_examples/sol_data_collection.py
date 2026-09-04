@@ -390,8 +390,10 @@ class E6RightHeadDataCollector(DataCollector):
                     status = self.e6_transport_status()
                     if status['usb_mode'] == 'storage':
                         message = (
-                            'E6 仍处于 05c6:f000 存储/未启动模式；'
-                            '请确认头环已开机并解锁，重新插拔 USB 后再点击恢复'
+                            'E6 只暴露 05c6:f000 存储接口，ADB 未开启；'
+                            '请在头环“开发者选项”中确认“USB 调试”已开启'
+                            '（已开启则关闭后重开），重插 USB 并允许此电脑，'
+                            '然后再点击“恢复 E6”'
                         )
                         code = 'storage_mode'
                     elif status['usb_mode'] == 'missing':
