@@ -78,6 +78,8 @@ E6_USB_STORAGE_ID = ('05c6', 'f000')
 E6_USB_ADB_ID = ('18d1', '4ee2')
 E6_USBFS_RESET = 0x5514
 E6_RECOVERY_ADB_WAIT_SECONDS = 10.0
+E6_RECOVERY_APP_RELEASE_SECONDS = 4.0
+E6_RECOVERY_APP_WAIT_SECONDS = 5.0
 
 QUANTA_X2_RAW_TOPICS = {
     'head_rgb_stream',
@@ -352,18 +354,37 @@ class E6RightHeadDataCollector(DataCollector):
         usb_reset_attempted = False
         try:
             with self._e6_adb_lock:
-                self._run_e6_adb_host('kill-server', check=False, timeout=5.0)
-                self._run_e6_adb_host('start-server', timeout=8.0)
-                adb_state = self._wait_for_e6_adb(2.0)
+                usb_devices = self._find_e6_usb_devices()
+                primary_usb = (
+                    usb_devices[0] if len(usb_devices) == 1 else None
+                )
+                adb_state = self._e6_adb_state()
 
-                if adb_state == 'offline':
-                    self._run_e6_adb('reconnect', check=False, timeout=5.0)
-                    adb_state = self._wait_for_e6_adb(3.0)
-
-                if adb_state == 'missing':
-                    usb_devices = self._find_e6_usb_devices()
-                    if len(usb_devices) == 1:
-                        self._reset_e6_usb_device(usb_devices[0])
+                # Do not disturb a healthy transport.  This headset needs
+                # several seconds to enumerate after boot, and restarting the
+                # host server (or issuing ``adb reconnect``) while it is
+                # already online can leave it reported as ``offline``.
+                if adb_state not in {'device', 'unauthorized'}:
+                    if primary_usb and primary_usb['mode'] == 'adb':
+                        adb_state = self._wait_for_e6_adb(
+                            E6_RECOVERY_ADB_WAIT_SECONDS
+                        )
+                        if adb_state not in {'device', 'unauthorized'}:
+                            self._run_e6_adb_host(
+                                'kill-server',
+                                check=False,
+                                timeout=5.0,
+                            )
+                            self._run_e6_adb_host(
+                                'start-server',
+                                check=False,
+                                timeout=8.0,
+                            )
+                            adb_state = self._wait_for_e6_adb(
+                                E6_RECOVERY_ADB_WAIT_SECONDS
+                            )
+                    elif primary_usb and primary_usb['mode'] == 'storage':
+                        self._reset_e6_usb_device(primary_usb)
                         usb_reset_attempted = True
                         time.sleep(1.0)
                         self._run_e6_adb_host(
@@ -426,6 +447,11 @@ class E6RightHeadDataCollector(DataCollector):
                     E6_STREAM_PACKAGE,
                     check=False,
                 )
+                # The headset camera broker releases RGB ownership
+                # asynchronously.  Starting immediately can leave the new
+                # process alive but with ``rgb_callbacks=0`` and
+                # ``h265_au=0`` (QVR reports a non-master client).
+                time.sleep(E6_RECOVERY_APP_RELEASE_SECONDS)
                 self._run_e6_adb(
                     'shell',
                     'am',
@@ -440,12 +466,19 @@ class E6RightHeadDataCollector(DataCollector):
                     f'tcp:{E6_LOCAL_STREAM_PORT}',
                     f'tcp:{E6_REMOTE_STREAM_PORT}',
                 )
-                process_id, _ = self._run_e6_adb(
-                    'shell',
-                    'pidof',
-                    E6_STREAM_PACKAGE,
-                    check=False,
+                process_id = ''
+                app_deadline = (
+                    time.monotonic() + E6_RECOVERY_APP_WAIT_SECONDS
                 )
+                while not process_id and time.monotonic() < app_deadline:
+                    process_id, _ = self._run_e6_adb(
+                        'shell',
+                        'pidof',
+                        E6_STREAM_PACKAGE,
+                        check=False,
+                    )
+                    if not process_id:
+                        time.sleep(0.2)
                 if not process_id:
                     raise E6TransportError('E6 推流 App 启动后没有运行')
                 return {

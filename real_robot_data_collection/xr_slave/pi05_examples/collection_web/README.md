@@ -97,3 +97,7 @@ source /opt/ros/jazzy/setup.bash
 - “停止采集”不是机器人急停。
 - “恢复 E6”只操作匹配 `E6_SERIAL` 的 USB/ADB/视频链路，不操作机械臂、
   Revo2 或遥操控制模式。
+- E6 已处于 `device` 时不会重启 ADB server；头环刚开机或暂为 `offline` 时
+  会先等待 USB/ADB 自然枚举，避免恢复操作本身打断正常连接。
+- 重启推流 App 前会等待 E6 RGB 相机资源完成释放，避免 App 进程已启动但
+  `rgb_callbacks=0`、实际没有 H.265 视频帧的竞态。
