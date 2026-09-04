@@ -12,6 +12,7 @@ import os
 import socket
 import struct
 import subprocess
+import threading
 import time
 from types import SimpleNamespace
 from typing import Annotated
@@ -67,6 +68,16 @@ E6_PACKET_MAX_PAYLOAD = 32 * 1024 * 1024
 E6_PACKET_IDLE_TIMEOUT_SECONDS = 5.0
 E6_TIMESTAMP_MAX_SKEW_SECONDS = 30.0
 E6_PACKET_HEADER = struct.Struct('>4sHHIHHIQQIq')
+E6_USB_SYSFS_ROOT = Path(
+    os.environ.get('E6_USB_SYSFS_ROOT', '/sys/bus/usb/devices')
+)
+E6_USB_DEVICE_ROOT = Path(
+    os.environ.get('E6_USB_DEVICE_ROOT', '/dev/bus/usb')
+)
+E6_USB_STORAGE_ID = ('05c6', 'f000')
+E6_USB_ADB_ID = ('18d1', '4ee2')
+E6_USBFS_RESET = 0x5514
+E6_RECOVERY_ADB_WAIT_SECONDS = 10.0
 
 QUANTA_X2_RAW_TOPICS = {
     'head_rgb_stream',
@@ -146,31 +157,312 @@ class E6H265Frame:
 class E6RightHeadDataCollector(DataCollector):
     """Collect the E6 KONA headset's physical right-eye RGB camera."""
 
-    def _run_e6_adb(self, *arguments, check=True, timeout=8.0):
+    _e6_adb_lock = threading.RLock()
+    _e6_recovery_lock = threading.Lock()
+
+    @staticmethod
+    def _e6_adb_environment():
         environment = os.environ.copy()
         existing_library_path = environment.get('LD_LIBRARY_PATH', '')
         environment['LD_LIBRARY_PATH'] = E6_ADB_LIBRARY_PATH + (
             f':{existing_library_path}' if existing_library_path else ''
         )
         environment['ADB_VENDOR_KEYS'] = E6_ADB_VENDOR_KEYS
-        command = [E6_ADB_BIN, '-s', E6_SERIAL, *arguments]
+        return environment
+
+    def _execute_e6_adb(self, command, timeout=8.0):
         try:
-            result = subprocess.run(
-                command,
-                env=environment,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-            )
+            with self._e6_adb_lock:
+                return subprocess.run(
+                    command,
+                    env=self._e6_adb_environment(),
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=False,
+                )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise E6TransportError(f'ADB 命令无法执行：{error}') from error
+
+    def _run_e6_adb(self, *arguments, check=True, timeout=8.0):
+        command = [E6_ADB_BIN, '-s', E6_SERIAL, *arguments]
+        result = self._execute_e6_adb(command, timeout=timeout)
         if check and result.returncode != 0:
             detail = (result.stderr or result.stdout or '').strip()
             raise E6TransportError(
                 f"ADB 命令失败（{result.returncode}）：{detail or '无输出'}"
             )
         return result.stdout.strip(), result.returncode
+
+    def _run_e6_adb_host(self, *arguments, check=True, timeout=8.0):
+        result = self._execute_e6_adb(
+            [E6_ADB_BIN, *arguments],
+            timeout=timeout,
+        )
+        if check and result.returncode != 0:
+            detail = (result.stderr or result.stdout or '').strip()
+            raise E6TransportError(
+                f"ADB 主机命令失败（{result.returncode}）："
+                f"{detail or '无输出'}"
+            )
+        return result.stdout.strip(), result.returncode
+
+    @staticmethod
+    def _read_usb_attribute(device_path, name):
+        try:
+            return (device_path / name).read_text(encoding='utf-8').strip()
+        except (FileNotFoundError, OSError):
+            return ''
+
+    def _find_e6_usb_devices(self):
+        if not E6_SERIAL or not E6_USB_SYSFS_ROOT.is_dir():
+            return []
+        devices = []
+        try:
+            candidates = list(E6_USB_SYSFS_ROOT.iterdir())
+        except OSError:
+            return []
+        for candidate in candidates:
+            serial = self._read_usb_attribute(candidate, 'serial')
+            if serial != E6_SERIAL:
+                continue
+            vendor_id = self._read_usb_attribute(candidate, 'idVendor').lower()
+            product_id = self._read_usb_attribute(candidate, 'idProduct').lower()
+            bus_number = self._read_usb_attribute(candidate, 'busnum')
+            device_number = self._read_usb_attribute(candidate, 'devnum')
+            if not (
+                vendor_id
+                and product_id
+                and bus_number.isdigit()
+                and device_number.isdigit()
+            ):
+                continue
+            usb_id = (vendor_id, product_id)
+            if usb_id == E6_USB_ADB_ID:
+                mode = 'adb'
+            elif usb_id == E6_USB_STORAGE_ID:
+                mode = 'storage'
+            else:
+                mode = 'unknown'
+            devices.append(
+                {
+                    'sysfs_name': candidate.name,
+                    'vendor_id': vendor_id,
+                    'product_id': product_id,
+                    'usb_id': f'{vendor_id}:{product_id}',
+                    'mode': mode,
+                    'product': self._read_usb_attribute(candidate, 'product'),
+                    'device_path': (
+                        E6_USB_DEVICE_ROOT
+                        / f'{int(bus_number):03d}'
+                        / f'{int(device_number):03d}'
+                    ),
+                }
+            )
+        return devices
+
+    def _e6_adb_state(self):
+        output, _ = self._run_e6_adb_host(
+            'devices',
+            '-l',
+            check=False,
+            timeout=4.0,
+        )
+        for line in output.splitlines()[1:]:
+            fields = line.split()
+            if len(fields) >= 2 and fields[0] == E6_SERIAL:
+                return fields[1].lower()
+        return 'missing'
+
+    def e6_transport_status(self):
+        usb_devices = self._find_e6_usb_devices()
+        diagnosis_error = None
+        if E6_SERIAL:
+            try:
+                adb_state = self._e6_adb_state()
+            except E6TransportError as error:
+                adb_state = 'error'
+                diagnosis_error = str(error)
+        else:
+            adb_state = 'unconfigured'
+        primary = usb_devices[0] if len(usb_devices) == 1 else None
+        status = {
+            'configured': bool(E6_SERIAL),
+            'adb_state': adb_state,
+            'usb_device_count': len(usb_devices),
+            'usb_mode': primary['mode'] if primary else (
+                'ambiguous' if usb_devices else 'missing'
+            ),
+            'usb_id': primary['usb_id'] if primary else None,
+            'usb_product': primary['product'] if primary else None,
+        }
+        if diagnosis_error:
+            status['diagnosis_error'] = diagnosis_error
+        return status
+
+    def _reset_e6_usb_device(self, device):
+        device_path = Path(device['device_path'])
+        try:
+            descriptor = os.open(device_path, os.O_RDWR)
+        except PermissionError as error:
+            raise E6TransportError(
+                'XR 用户没有 E6 USB 重置权限；请先安装仓库中的 '
+                '99-e6-adb.rules，再重新插拔一次 E6'
+            ) from error
+        except OSError as error:
+            raise E6TransportError(
+                f'E6 USB 设备无法打开：{error}'
+            ) from error
+        try:
+            fcntl.ioctl(descriptor, E6_USBFS_RESET, 0)
+        except OSError as error:
+            raise E6TransportError(f'E6 USB 重置失败：{error}') from error
+        finally:
+            os.close(descriptor)
+
+    def _wait_for_e6_adb(self, timeout_seconds):
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        state = self._e6_adb_state()
+        while state not in {'device', 'unauthorized'} and time.monotonic() < deadline:
+            time.sleep(0.5)
+            state = self._e6_adb_state()
+        return state
+
+    def recover_e6_transport(self):
+        """Recover only the configured E6 USB/ADB/video transport.
+
+        The web controller blocks this call during Episode recording.  This
+        method never touches robot control, Revo2, or any other USB device.
+        """
+        if not E6_SERIAL:
+            return {
+                'ok': False,
+                'code': 'not_configured',
+                'message': '未配置 E6_SERIAL，无法执行恢复',
+                'status': self.e6_transport_status(),
+            }
+        if not self._e6_recovery_lock.acquire(blocking=False):
+            return {
+                'ok': False,
+                'code': 'busy',
+                'message': 'E6 恢复操作正在进行，请稍候',
+                'status': self.e6_transport_status(),
+            }
+
+        usb_reset_attempted = False
+        try:
+            with self._e6_adb_lock:
+                self._run_e6_adb_host('kill-server', check=False, timeout=5.0)
+                self._run_e6_adb_host('start-server', timeout=8.0)
+                adb_state = self._wait_for_e6_adb(2.0)
+
+                if adb_state == 'offline':
+                    self._run_e6_adb('reconnect', check=False, timeout=5.0)
+                    adb_state = self._wait_for_e6_adb(3.0)
+
+                if adb_state == 'missing':
+                    usb_devices = self._find_e6_usb_devices()
+                    if len(usb_devices) == 1:
+                        self._reset_e6_usb_device(usb_devices[0])
+                        usb_reset_attempted = True
+                        time.sleep(1.0)
+                        self._run_e6_adb_host(
+                            'start-server',
+                            check=False,
+                            timeout=8.0,
+                        )
+                        adb_state = self._wait_for_e6_adb(
+                            E6_RECOVERY_ADB_WAIT_SECONDS
+                        )
+
+                if adb_state == 'unauthorized':
+                    return {
+                        'ok': False,
+                        'code': 'unauthorized',
+                        'message': (
+                            'E6 已连接但未授权；请在头环内允许 USB 调试，'
+                            '然后再次点击“恢复 E6”'
+                        ),
+                        'usb_reset_attempted': usb_reset_attempted,
+                        'status': self.e6_transport_status(),
+                    }
+                if adb_state != 'device':
+                    status = self.e6_transport_status()
+                    if status['usb_mode'] == 'storage':
+                        message = (
+                            'E6 仍处于 05c6:f000 存储/未启动模式；'
+                            '请确认头环已开机并解锁，重新插拔 USB 后再点击恢复'
+                        )
+                        code = 'storage_mode'
+                    elif status['usb_mode'] == 'missing':
+                        message = 'XR 没有检测到 E6 USB，请检查供电和数据线'
+                        code = 'usb_missing'
+                    else:
+                        message = (
+                            f'E6 ADB 状态为 {adb_state}；'
+                            '请检查头环 USB 调试状态后重试'
+                        )
+                        code = 'adb_unavailable'
+                    return {
+                        'ok': False,
+                        'code': code,
+                        'message': message,
+                        'usb_reset_attempted': usb_reset_attempted,
+                        'status': status,
+                    }
+
+                self._run_e6_adb(
+                    'forward',
+                    '--remove',
+                    f'tcp:{E6_LOCAL_STREAM_PORT}',
+                    check=False,
+                )
+                self._run_e6_adb(
+                    'shell',
+                    'am',
+                    'force-stop',
+                    E6_STREAM_PACKAGE,
+                    check=False,
+                )
+                self._run_e6_adb(
+                    'shell',
+                    'am',
+                    'start',
+                    '-W',
+                    '-n',
+                    E6_STREAM_ACTIVITY,
+                    timeout=15.0,
+                )
+                self._run_e6_adb(
+                    'forward',
+                    f'tcp:{E6_LOCAL_STREAM_PORT}',
+                    f'tcp:{E6_REMOTE_STREAM_PORT}',
+                )
+                process_id, _ = self._run_e6_adb(
+                    'shell',
+                    'pidof',
+                    E6_STREAM_PACKAGE,
+                    check=False,
+                )
+                if not process_id:
+                    raise E6TransportError('E6 推流 App 启动后没有运行')
+                return {
+                    'ok': True,
+                    'code': 'recovered',
+                    'message': 'E6 ADB、推流 App 和端口转发已重新建立',
+                    'usb_reset_attempted': usb_reset_attempted,
+                    'status': self.e6_transport_status(),
+                }
+        except E6TransportError as error:
+            return {
+                'ok': False,
+                'code': 'recovery_failed',
+                'message': str(error),
+                'usb_reset_attempted': usb_reset_attempted,
+                'status': self.e6_transport_status(),
+            }
+        finally:
+            self._e6_recovery_lock.release()
 
     def _prepare_e6_transport(self):
         if not E6_SERIAL:

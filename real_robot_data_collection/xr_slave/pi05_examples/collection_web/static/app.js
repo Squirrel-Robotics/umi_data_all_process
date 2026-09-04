@@ -24,6 +24,7 @@ const ui = {
   memoryFree: document.querySelector("#memoryFree"),
   swapUsed: document.querySelector("#swapUsed"),
   cameraPreviewInfo: document.querySelector("#cameraPreviewInfo"),
+  e6RecoverButton: document.querySelector("#e6RecoverButton"),
   startButton: document.querySelector("#startButton"),
   recordButton: document.querySelector("#recordButton"),
   stopButton: document.querySelector("#stopButton"),
@@ -476,6 +477,7 @@ function renderSystem(system) {
 
 function renderButtons(status) {
   const state = status.state;
+  const e6RecoveryRunning = Boolean(status.e6_recovery?.running);
   ui.startButton.disabled = state !== "ready";
   ui.recordButton.disabled = !(
     state === "armed" && status.start_gate?.confirm_allowed
@@ -485,6 +487,11 @@ function renderButtons(status) {
   ui.discardButton.disabled = state !== "review";
   ui.closeButton.disabled = !new Set(["starting", "armed"]).has(state);
   ui.dialogSave.disabled = !status.save_allowed;
+  ui.e6RecoverButton.disabled =
+    e6RecoveryRunning || !new Set(["ready", "starting"]).has(state);
+  ui.e6RecoverButton.textContent = e6RecoveryRunning
+    ? "恢复中…"
+    : "恢复 E6";
 }
 
 function renderRunMessage(status) {
@@ -861,6 +868,29 @@ ui.closeButton.addEventListener("click", async () => {
   ui.closeButton.disabled = true;
   const accepted = await command("/api/close");
   if (!accepted && app.status) renderButtons(app.status);
+});
+
+ui.e6RecoverButton.addEventListener("click", async () => {
+  if (!new Set(["ready", "starting"]).has(app.status?.state)) {
+    showToast("只能在数采关闭或预检阶段恢复 E6", true);
+    return;
+  }
+  ui.e6RecoverButton.disabled = true;
+  ui.e6RecoverButton.textContent = "恢复中…";
+  showToast("正在检测并恢复 E6，最多需要约 20 秒…");
+  try {
+    const payload = await request("/api/recover-e6", {
+      method: "POST",
+      body: { run_id: app.status?.run_id || null },
+    });
+    const result = payload.e6_recovery || {};
+    showToast(result.message || "E6 恢复操作已完成", !result.ok);
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    await pollStatus();
+    if (app.status) renderButtons(app.status);
+  }
 });
 
 function requestSave() {

@@ -140,9 +140,19 @@
         <section class="camera-panel panel">
           <div class="panel-title">
             <strong>三路相机</strong>
-            <span id="cameraPreviewInfo">
-              E6 右目 60 Hz + 双腕 30 Hz · E6 预览约 1 FPS
-            </span>
+            <div class="camera-title-actions">
+              <span id="cameraPreviewInfo">
+                E6 右目 60 Hz + 双腕 30 Hz · E6 预览约 1 FPS
+              </span>
+              <button
+                id="e6RecoverButton"
+                class="button e6-recover"
+                type="button"
+                title="检测并重建 E6 USB、ADB、推流 App 和端口转发"
+              >
+                恢复 E6
+              </button>
+            </div>
           </div>
 
           <div class="camera-grid">

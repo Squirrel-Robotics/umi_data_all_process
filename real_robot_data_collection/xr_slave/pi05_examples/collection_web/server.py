@@ -1450,6 +1450,20 @@ class CollectionController:
         self.monitoring_active = False
         self.effective_start_timestamp: float | None = None
         self.effective_end_timestamp: float | None = None
+        self._e6_recovery_operation_lock = threading.Lock()
+        self._e6_recovery_status: dict[str, Any] = {
+            "running": False,
+            "started_at": None,
+            "finished_at": None,
+            "last_result": None,
+        }
+
+    def _ensure_e6_recovery_idle_locked(self):
+        if self._e6_recovery_status["running"]:
+            raise ApiError(
+                HTTPStatus.CONFLICT,
+                "E6 正在恢复，请等待操作完成",
+            )
 
     def _clear_effective_interval_locked(self):
         self.effective_start_timestamp = None
@@ -1570,6 +1584,7 @@ class CollectionController:
                     HTTPStatus.CONFLICT,
                     f"当前状态为“{STATE_LABELS[self.state]}”，不能开始",
                 )
+            self._ensure_e6_recovery_idle_locked()
             if self.start_guard is not None:
                 self.start_guard()
             self.run_id = secrets.token_hex(12)
@@ -1778,6 +1793,7 @@ class CollectionController:
     def confirm_start(self, body: dict[str, Any]) -> dict[str, Any]:
         with self.lock:
             self._refresh_cooldown_locked()
+            self._ensure_e6_recovery_idle_locked()
             if self.state != "armed":
                 raise ApiError(
                     HTTPStatus.CONFLICT,
@@ -1799,6 +1815,69 @@ class CollectionController:
             body=body,
             target=self._do_confirm_start,
         )
+
+    def recover_e6(self, body: dict[str, Any]) -> dict[str, Any]:
+        del body
+        with self.lock:
+            self._refresh_cooldown_locked()
+            if self._shutting_down:
+                raise ApiError(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    "服务正在安全退出，请稍后重试",
+                )
+            if self.state not in {"ready", "starting"}:
+                raise ApiError(
+                    HTTPStatus.CONFLICT,
+                    "只能在数采关闭或预检阶段恢复 E6；正式采集期间禁止重置",
+                )
+            if not self._e6_recovery_operation_lock.acquire(blocking=False):
+                raise ApiError(HTTPStatus.CONFLICT, "E6 恢复操作正在进行")
+            self._e6_recovery_status = {
+                "running": True,
+                "started_at": time.time(),
+                "finished_at": None,
+                "last_result": None,
+            }
+            self.version += 1
+
+        result: dict[str, Any]
+        try:
+            recovery = getattr(self.collector, "recover_e6_transport", None)
+            if not callable(recovery):
+                result = {
+                    "ok": False,
+                    "code": "unsupported",
+                    "message": "当前采集器不支持 E6 恢复",
+                }
+            else:
+                raw_result = recovery()
+                if not isinstance(raw_result, dict):
+                    raise RuntimeError("E6 恢复函数返回了无效结果")
+                result = json_safe(raw_result)
+        except BaseException as error:
+            traceback.print_exc()
+            result = {
+                "ok": False,
+                "code": "recovery_failed",
+                "message": f"{type(error).__name__}: {error}",
+            }
+        finally:
+            with self.lock:
+                self._e6_recovery_status = {
+                    "running": False,
+                    "started_at": self._e6_recovery_status["started_at"],
+                    "finished_at": time.time(),
+                    "last_result": result,
+                }
+                self.version += 1
+            self._e6_recovery_operation_lock.release()
+
+        return {
+            "accepted": True,
+            "state": self.state,
+            "version": self.version,
+            "e6_recovery": result,
+        }
 
     def _do_confirm_start(self):
         try:
@@ -2054,6 +2133,7 @@ class CollectionController:
             effective_end_timestamp = self.effective_end_timestamp
             monitoring_active = self.monitoring_active
             task = self.task
+            e6_recovery_status = copy.deepcopy(self._e6_recovery_status)
 
         live = self.collector.live_snapshot()
         if state_snapshot.state == "ready" and not monitoring_active:
@@ -2148,6 +2228,7 @@ class CollectionController:
             "pending_validation": pending_validation,
             "save_allowed": save_allowed,
             "monitoring_active": monitoring_active,
+            "e6_recovery": e6_recovery_status,
             "alignment": live,
             "effective_interval": {
                 "start_timestamp": effective_start_timestamp,
@@ -2581,6 +2662,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "/api/stop": self.server.controller.stop,
                 "/api/save": self.server.controller.save,
                 "/api/discard": self.server.controller.discard,
+                "/api/recover-e6": self.server.controller.recover_e6,
             }
             operation = operations.get(route)
             if operation is None:

@@ -1,2 +1,5 @@
 # Allow the XR collection service to access only the designated E6 headset.
 SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", ATTR{idProduct}=="4ee2", ATTR{serial}=="REPLACE_WITH_E6_SERIAL", OWNER:="xr", GROUP:="xr", MODE:="0660"
+# The same headset can enumerate as KONA-MTP before ADB is available.  Access
+# is required so the web recovery button can issue one targeted USB reset.
+SUBSYSTEM=="usb", ATTR{idVendor}=="05c6", ATTR{idProduct}=="f000", ATTR{serial}=="REPLACE_WITH_E6_SERIAL", OWNER:="xr", GROUP:="xr", MODE:="0660"

@@ -95,7 +95,10 @@ X2 从机：
 2. 将 `xr_slave/revo2_vr_bridge/` 同步到 `/home/xr/robocontrol_ws/revo2_vr_bridge/`。
 3. 导出 Revo2 双手序列号、串口路径和 `REVO2_GRIP_SOURCE_IP=<XR_MASTER_IP>`，然后运行 `vr_trigger_control.sh start`。
 4. 将用户级 `sol-collection-web.service` 安装到 `~/.config/systemd/user/`，在 `~/.config/xr-real-data-collection.env` 填入 E6 和 ROS bridge 配置后重载并启动。
-5. 通过 `http://<XR_SLAVE_IP>:8000/` 进入数采 Web 界面。
+5. 将 `xr_slave/udev/99-e6-adb.rules` 中的占位序列号替换为实际
+   `E6_SERIAL`，安装到 `/etc/udev/rules.d/` 后重载 udev，并重新插拔一次
+   E6。规则只向 `xr` 用户开放该序列号的 ADB 模式和 KONA-MTP 恢复模式。
+6. 通过 `http://<XR_SLAVE_IP>:8000/` 进入数采 Web 界面。
 
 ## 验证顺序
 
@@ -105,6 +108,9 @@ X2 从机：
 4. X2 从机应在 UDP/39157 监听，Revo2 bridge 启动日志应明确验证左右手型号。
 5. `/revo2/state/{left,right}` 应持续发布六维反馈，板机变化时 `/revo2/command/{left,right}` 应出现成功指令。
 6. Web 页面只有在 9 路契约全部通过预检后才能确认采集。
+7. E6 无帧时可在数采关闭或预检阶段点击“恢复 E6”；按钮会重建 ADB、
+   推流 App 和端口转发，并在需要开机、重新插线或确认 USB 调试授权时给出
+   明确提示。正式 Episode 采集中按钮不可用。
 
 ## 安全边界
 
