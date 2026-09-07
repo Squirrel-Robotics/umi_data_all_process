@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1160" viewBox="0 0 1440 1160" role="img" aria-labelledby="title desc">
+<title id="title">三个点，定义自己的 Hand 坐标系</title>
+<desc id="desc">在同一个手柄局部坐标系中测量原点 O、前向点 F 和上向点 U。X 为 F 减 O 的单位方向，Y 为上向提示叉乘 X 的单位方向，Z 为 X 叉乘 Y。三根轴作为旋转矩阵的列，O 作为平移，得到手部在手柄中的固定外参，再与每帧手柄绝对位姿相乘，最后得到相邻帧 Hand 局部增量。</desc>
+<defs>
+<marker id="r" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#d64250"/></marker>
+<marker id="g" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#208262"/></marker>
+<marker id="b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#336fc1"/></marker>
+<marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8" fill="#62748b"/></marker>
+</defs>
+<style>text{font-family:"Noto Sans CJK SC","Microsoft YaHei","PingFang SC",sans-serif;fill:#172b45}.title{font-size:38px;font-weight:700}.head{font-size:26px;font-weight:700}.body{font-size:23px}.small{font-size:20px;fill:#52647a}.formula{font-family:monospace;font-size:23px}.red{fill:#d64250}.green{fill:#208262}.blue{fill:#336fc1}</style>
+<rect width="1440" height="1160" rx="20" fill="#f4f7fb"/>
+<text x="48" y="64" class="title">三个点，定义自己的 Hand 坐标系</text>
+<text x="48" y="109" class="body">不用手柄默认的 XYZ：用物理测量指定手部原点、前向和上向，再计算固定外参。</text>
+<rect x="48" y="145" width="649" height="553" rx="18" fill="#fff" stroke="#d4deeb"/>
+<rect x="721" y="145" width="671" height="553" rx="18" fill="#fff" stroke="#d4deeb"/>
+<text x="72" y="190" class="head">01 / 在手柄局部坐标系 C 中测三个点</text>
+<text x="72" y="225" class="small">三个点固定在同一硬件上；它们不是三帧轨迹点。</text>
+<path d="M302 500L530 470L430 300L250 340Z" fill="#eff4fb" stroke="#d4deeb"/>
+<path d="M302 500L520 472" stroke="#d64250" stroke-width="4" marker-end="url(#r)"/>
+<path d="M302 500L190 576" stroke="#208262" stroke-width="4" marker-end="url(#g)"/>
+<path d="M302 500L258 294" stroke="#336fc1" stroke-width="4" marker-end="url(#b)"/>
+<path d="M302 500L404 300" stroke="#a78b58" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#a)"/>
+<path d="M404 300L263 318" stroke="#a4afbe" stroke-width="2" stroke-dasharray="5 5"/>
+<circle cx="302" cy="500" r="8" fill="#172b45"/><circle cx="491" cy="476" r="7" fill="#d64250"/><circle cx="404" cy="300" r="7" fill="#a78b58"/>
+<text x="325" y="545" class="body">O · Hand 原点</text>
+<text x="467" y="438" class="body red">F · 前向点</text>
+<text x="427" y="289" class="body">U · 上向提示点</text>
+<text x="546" y="486" class="body red">+X</text>
+<text x="144" y="604" class="body green">+Y</text>
+<text x="211" y="279" class="body blue">+Z</text>
+<text x="340" y="389" class="small">u = U − O</text>
+<text x="72" y="651" class="small">示意不按比例；最终 Z 是上向提示的正交化方向。</text>
+<text x="745" y="190" class="head">02 / 按固定顺序构造正交右手系</text>
+<text x="753" y="260" class="formula red">x = normalize(F − O)</text>
+<text x="753" y="298" class="small">先固定你希望的手部前向。</text>
+<text x="753" y="355" class="formula green">y = normalize((U − O) × x)</text>
+<text x="753" y="393" class="small">注意叉积顺序：上向提示 × 前向。</text>
+<text x="753" y="450" class="formula blue">z = normalize(x × y)</text>
+<text x="753" y="488" class="small">重算 Z，去掉测量上向中的前向分量。</text>
+<rect x="747" y="524" width="619" height="144" rx="12" fill="#eef4fb"/>
+<text x="770" y="562" class="body">x × y = z → 右手坐标系</text>
+<text x="770" y="602" class="formula">RᵀR ≈ I      det(R) ≈ +1</text>
+<text x="770" y="641" class="small">O≠F、O≠U，两个方向不能共线或接近共线。</text>
+<rect x="48" y="729" width="1344" height="170" rx="18" fill="#e7f4f0" stroke="#b1d2c6"/>
+<text x="72" y="774" class="head">03 / 三根轴放成“列”，原点放进平移</text>
+<text x="72" y="827" class="formula">R_C_H = [ x | y | z ]</text>
+<text x="72" y="867" class="formula">p_C_H = O / 1000   # mm → m</text>
+<text x="708" y="821" class="body">T_C_H：Hand 在 Controller 中的固定外参</text>
+<text x="708" y="864" class="small">R_C_H @ [1,0,0] = x；列向量不能误写成行向量。</text>
+<rect x="48" y="930" width="1344" height="165" rx="18" fill="#172b45"/>
+<text x="72" y="973" style="fill:#fff;font-size:26px;font-weight:700">04 / 固定标定 × 每帧手柄运动 → 每帧手部运动</text>
+<text x="72" y="1022" style="fill:#fff;font-family:monospace;font-size:25px">T_W_H[t] = T_W_C[t] @ T_C_H</text>
+<text x="72" y="1066" style="fill:#d2deeb;font-family:monospace;font-size:23px">D_H[t] = inverse(T_W_H[t−1]) @ T_W_H[t]</text>
+<text x="915" y="1022" style="fill:#fff;font-size:23px">先得到 Hand 绝对位姿</text>
+<text x="915" y="1066" style="fill:#d2deeb;font-size:23px">再得到上一帧自身局部增量</text>
+<text x="48" y="1136" class="small">手部 XYZ 随硬件一起转动 · 机器人法兰偏移与 Rx 轴向适配是后续独立步骤，不属于三点构轴。</text>
+</svg>

@@ -2,6 +2,12 @@
 
 用于整理 UMI 原始数据、生成末端增量、审核 RGB、转换 LeRobot 数据，以及在 RTX 5090 上回放。
 
+## 图解：如何用三个点定义 Hand 坐标系
+
+![由原点 O、前向点 F、上向点 U 构造右手 XYZ 坐标系，再将 Controller 绝对位姿转换为 Hand 位姿](docs/images/controller-to-hand-calibration.svg)
+
+**[完整说明：三点标定 → Controller 到 Hand → 上一帧局部增量](docs/controller-to-hand-calibration.md)**。包含三点的物理含义、叉积顺序、旋转矩阵列向量、实际测量数值和可复现代码。
+
 ## 目录
 
 ```text
