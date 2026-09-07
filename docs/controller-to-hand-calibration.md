@@ -1,10 +1,31 @@
-# 用三个点定义自己的 Hand 坐标系
+# 看图理解：三个点定义自己的 Hand 坐标系
 
-我们的目标不是直接使用手柄的原生 XYZ，而是**在手柄固定连接的手部上，定义一个符合操作习惯的坐标系：+X 向前、+Z 向上、+Y 按右手规则确定**。然后将每一帧的 `controller_pose` 转换到这个手部坐标系。
+**O 定原点，F 定前向，U 提供上向；红 X、绿 Y、蓝 Z 是最后得到的手部坐标轴。**
 
-![三点标定与位姿转换](images/controller-to-hand-calibration.svg)
+## 先选三个点，再得到自己的 XYZ
 
-图中几何关系为原理示意，不是硬件尺寸图。这里的“向前”“向上”指手部自身的方向；手转动后，它们也跟着手转动，并不始终指向世界前方或重力上方。
+![三个测量点及由它们构造的三维右手坐标系](images/three-points-3d.svg)
+
+左：在同一 Controller 局部系中测量 O/F/U。右：以 O 为原点，沿 OF 建立 X，再由上向提示构造正交的 Y、Z。图中简化手部和手柄外形仅辅助理解，不是实物 CAD；点位关系使用文中的新硬件右侧测量值。
+
+## 同一段动作，从“看手柄”变成“看手部”
+
+![左右同步的 Controller 和 Hand 坐标系运动示意](images/controller-hand-motion.gif)
+
+左边看手柄原点与轴，右边看手部原点与轴。两边是**同一刚体、同一时刻**，不是两个独立动作。固定标定改变了参考原点和轴向，所以两条原点轨迹可以不同；轴随硬件一起转动。
+
+> 这是数学构造的原理动画，不是采集数据回放；不含机器人法兰偏移或额外 Rx。曲线是整段合成轨迹，浅色坐标轴是其他时刻的姿态。**这里展示的是绝对位姿，尚未相邻帧相对化。** 不想播放动画可看 [静态对比图](images/controller-hand-motion.svg)。
+
+## 再把绝对位姿变成 hand_pose 的局部增量
+
+得到每帧 Hand 绝对位姿后，才计算“相对上一帧 Hand 自身坐标系”的变化。回放从指定初始位姿逐帧右乘；文件名相同不代表硬件标定、原点或末端轴向相同。
+
+<details>
+<summary><strong>展开：公式图、三点推导、实际测量数值与可运行代码</strong></summary>
+
+![三点标定公式与处理链](images/controller-to-hand-calibration.svg)
+
+以下保留完整推导，便于其他人换成自己的测量点复现。+X 向前、+Z 向上、+Y 按右手规则确定；“向上”指手部自身方向，并不始终是世界或重力上方。
 
 ## 1. 三个点分别是什么意思？
 
@@ -164,3 +185,17 @@ print("p_C_H (m) =", p)
 ```
 
 实现对应 [`controller_to_hand_pose.py`](../controller_to_hand_pose.py) 中的 `hand_offset`（三点构轴）、`compose_pose`（绝对位姿组合）、`relative_pose`（相邻帧局部增量）。本次仅补充图文，不修改标定、处理脚本或已有 CSV。
+
+### 重生成三维配图
+
+矢量图由 [绘图脚本](tools/render_calibration_visuals.py) 根据相同标定进行三维投影，不依赖绘图模型生成几何。脚本使用 Python 标准库，在仓库根目录运行：
+
+```bash
+python3 docs/tools/render_calibration_visuals.py
+# 如需导出合成运动的 48 帧 SVG：
+python3 docs/tools/render_calibration_visuals.py --animation-frames /tmp/calibration-frames
+```
+
+SVG 可直接在浏览器查看。发布的 GIF 由这些 SVG 用 librsvg 渲染，再用 Pillow 合成（48 帧、每帧 100 ms）；它只是帮助理解刚性外参，不用于验证真实轨迹质量。
+
+</details>

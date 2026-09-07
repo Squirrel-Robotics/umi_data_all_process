@@ -4,9 +4,11 @@
 
 ## 图解：如何用三个点定义 Hand 坐标系
 
-![由原点 O、前向点 F、上向点 U 构造右手 XYZ 坐标系，再将 Controller 绝对位姿转换为 Hand 位姿](docs/images/controller-to-hand-calibration.svg)
+![在简化三维手部上标记原点 O、前向点 F、上向点 U，并生成红 X 绿 Y 蓝 Z 坐标轴](docs/images/three-points-3d.svg)
 
-**[完整说明：三点标定 → Controller 到 Hand → 上一帧局部增量](docs/controller-to-hand-calibration.md)**。包含三点的物理含义、叉积顺序、旋转矩阵列向量、实际测量数值和可复现代码。
+![Controller 与 Hand 坐标系随同一刚体运动；原理动画，非实测回放](docs/images/controller-hand-motion.gif)
+
+**[看图理解完整过程](docs/controller-to-hand-calibration.md)**：O 定原点，F 定前向，U 定上向提示。先看三维图和原理动画，公式、测量数值与复现代码按需展开。动画为合成运动，外形为示意模型。
 
 ## 目录
 
