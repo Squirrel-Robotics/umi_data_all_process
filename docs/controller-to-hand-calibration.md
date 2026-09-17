@@ -184,7 +184,7 @@ print("R_C_H =", R)
 print("p_C_H (m) =", p)
 ```
 
-实现对应 [`controller_to_hand_pose.py`](../controller_to_hand_pose.py) 中的 `hand_offset`（三点构轴）、`compose_pose`（绝对位姿组合）、`relative_pose`（相邻帧局部增量）。本次仅补充图文，不修改标定、处理脚本或已有 CSV。
+当前实现是 [`controller_to_hand_pose_v2.py`](../controller_to_hand_pose_v2.py)：三点构轴得到 `T_C_H`，再组合成绝对位姿，最后写成相邻帧局部增量。本文只补充图文，不修改标定、处理脚本或已有 CSV。
 
 ### 重生成三维配图
 

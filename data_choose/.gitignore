@@ -1,0 +1,13 @@
+runtime/
+runtime_*/
+# 直接运行 app.py 时可能使用的兼容默认位置。
+cache/
+state/
+.review_token
+review_token
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.coverage
+htmlcov/
+.DS_Store

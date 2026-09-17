@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="zh-CN" data-api-base="">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>UMI 数据审核</title>
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">U</div>
+          <div>
+            <h1>UMI 数据审核</h1>
+            <p id="datasetLabel">task_v1_new · 三路同步视频</p>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <div id="connectionBadge" class="connection-badge is-connecting" role="status">
+            <span class="status-dot"></span>
+            <span>正在连接</span>
+          </div>
+          <button id="refreshButton" class="icon-button" type="button" title="刷新列表" aria-label="刷新列表">
+            ↻
+          </button>
+        </div>
+      </header>
+
+      <section class="summary-strip" aria-label="审核统计">
+        <div class="progress-summary">
+          <div class="progress-heading">
+            <span>审核进度</span>
+            <strong id="reviewProgressText">0 / 0</strong>
+          </div>
+          <div class="progress-track" aria-hidden="true">
+            <span id="reviewProgressBar"></span>
+          </div>
+          <div id="precacheStatus" class="precache-status is-checking" role="status" aria-live="polite">
+            <span class="precache-dot" aria-hidden="true"></span>
+            <div class="precache-copy">
+              <span id="precacheText">正在检查后台缓存</span>
+              <span id="precacheCurrent" class="precache-current"></span>
+            </div>
+            <button id="precacheButton" class="precache-button" type="button" disabled>开始缓存</button>
+          </div>
+        </div>
+        <div class="summary-metrics">
+          <div class="summary-metric"><span>总数</span><strong id="statTotal">0</strong></div>
+          <div class="summary-metric is-pending"><span>待审</span><strong id="statPending">0</strong></div>
+          <div class="summary-metric is-kept"><span>保留</span><strong id="statKept">0</strong></div>
+          <div class="summary-metric is-skipped"><span>跳过</span><strong id="statSkipped">0</strong></div>
+          <div class="summary-metric is-trash"><span>回收站</span><strong id="statTrashed">0</strong></div>
+        </div>
+      </section>
+
+      <main class="workspace">
+        <section class="review-column" aria-label="视频审核区">
+          <div class="episode-header panel">
+            <div class="episode-title-group">
+              <span id="episodeOrdinal" class="eyebrow">未选择 episode</span>
+              <div class="episode-title-row">
+                <h2 id="episodeTitle">等待加载</h2>
+                <span id="episodeStateBadge" class="state-badge is-neutral">—</span>
+              </div>
+            </div>
+            <div class="episode-facts" aria-label="Episode 数据状态">
+              <div id="handPoseBadge" class="fact-chip is-muted">
+                <span class="fact-icon" aria-hidden="true">◇</span>
+                <span id="handPoseText">hand_pose 未检查</span>
+              </div>
+              <div id="mediaBadge" class="fact-chip is-muted">
+                <span class="fact-icon" aria-hidden="true">●</span>
+                <span id="mediaText">视频未准备</span>
+              </div>
+              <div id="warningBadge" class="fact-chip is-warning is-hidden">
+                <span class="fact-icon" aria-hidden="true">▲</span>
+                <span id="warningText">数据警告</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="viewerPanel" class="viewer-panel panel is-empty">
+            <div id="emptyViewer" class="empty-viewer">
+              <div class="empty-icon" aria-hidden="true">▷</div>
+              <h3>选择一条数据开始审核</h3>
+              <p>三路视频将按 E6 时间轴同步播放</p>
+            </div>
+
+            <div class="video-layout" aria-live="polite">
+              <article class="video-card video-card-head">
+                <div class="video-card-header">
+                  <div>
+                    <span class="camera-dot is-head"></span>
+                    <strong>头部相机</strong>
+                    <span class="camera-source">E6 右眼</span>
+                  </div>
+                  <button class="focus-video-button" data-focus-video="head" type="button" title="放大头部相机">1 · 放大</button>
+                </div>
+                <div class="video-frame">
+                  <video id="headVideo" muted playsinline preload="metadata" aria-label="E6 右眼视频"></video>
+                  <div id="headOverlay" class="stream-overlay">
+                    <span class="spinner"></span><span>等待视频</span>
+                  </div>
+                </div>
+              </article>
+
+              <div class="wrist-grid">
+                <article class="video-card">
+                  <div class="video-card-header">
+                    <div>
+                      <span class="camera-dot is-left"></span>
+                      <strong>左腕相机</strong>
+                      <span class="camera-source">cam0</span>
+                    </div>
+                    <button class="focus-video-button" data-focus-video="left" type="button" title="放大左腕相机">2 · 放大</button>
+                  </div>
+                  <div class="video-frame">
+                    <video id="leftVideo" muted playsinline preload="metadata" aria-label="左腕 cam0 视频"></video>
+                    <div id="leftOverlay" class="stream-overlay">
+                      <span class="spinner"></span><span>等待视频</span>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="video-card">
+                  <div class="video-card-header">
+                    <div>
+                      <span class="camera-dot is-right"></span>
+                      <strong>右腕相机</strong>
+                      <span class="camera-source">cam1</span>
+                    </div>
+                    <button class="focus-video-button" data-focus-video="right" type="button" title="放大右腕相机">3 · 放大</button>
+                  </div>
+                  <div class="video-frame">
+                    <video id="rightVideo" muted playsinline preload="metadata" aria-label="右腕 cam1 视频"></video>
+                    <div id="rightOverlay" class="stream-overlay">
+                      <span class="spinner"></span><span>等待视频</span>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <div class="transport" aria-label="视频播放控制">
+              <div class="timeline-row">
+                <span id="currentTimeLabel" class="time-label">00:00.000</span>
+                <input id="timeline" class="timeline" type="range" min="0" max="1" step="0.001" value="0" aria-label="播放进度" disabled />
+                <span id="durationLabel" class="time-label">00:00.000</span>
+              </div>
+              <div class="transport-row">
+                <div class="transport-group">
+                  <button id="previousEpisodeButton" class="transport-button" type="button" title="上一条">
+                    <span aria-hidden="true">│◀</span><span class="button-label">上一条</span>
+                  </button>
+                  <button id="backOneSecondButton" class="transport-button" type="button" title="后退 1 秒">-1s</button>
+                  <button id="previousFrameButton" class="transport-button" type="button" title="上一帧">│◀</button>
+                  <button id="playButton" class="play-button" type="button" title="播放 / 暂停" aria-label="播放">▶</button>
+                  <button id="nextFrameButton" class="transport-button" type="button" title="下一帧">▶│</button>
+                  <button id="forwardOneSecondButton" class="transport-button" type="button" title="前进 1 秒">+1s</button>
+                  <button id="nextEpisodeButton" class="transport-button" type="button" title="下一条">
+                    <span class="button-label">下一条</span><span aria-hidden="true">▶│</span>
+                  </button>
+                </div>
+                <label class="speed-control">
+                  <span>速度</span>
+                  <select id="speedSelect" aria-label="播放速度">
+                    <option value="0.25">0.25×</option>
+                    <option value="0.5">0.5×</option>
+                    <option value="0.75">0.75×</option>
+                    <option value="1" selected>1×</option>
+                    <option value="1.5">1.5×</option>
+                    <option value="2">2×</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="decision-bar panel">
+            <div class="shortcut-help">
+              <span><kbd>Space</kbd> 播放</span>
+              <span><kbd>←</kbd><kbd>→</kbd> 前后条</span>
+              <span><kbd>,</kbd><kbd>.</kbd> 逐帧</span>
+              <span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> 切换视角</span>
+            </div>
+            <div class="decision-actions">
+              <button id="keepButton" class="decision-button is-keep" type="button" disabled>
+                <kbd>K</kbd><span>保留</span>
+              </button>
+              <button id="skipButton" class="decision-button is-skip" type="button" disabled>
+                <kbd>S</kbd><span>跳过</span>
+              </button>
+              <button id="deleteButton" class="decision-button is-delete" type="button" disabled>
+                <kbd>D</kbd><span>移入回收站</span>
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <aside class="queue-panel panel" aria-label="Episode 列表">
+          <div class="queue-header">
+            <div>
+              <span class="eyebrow">数据队列</span>
+              <h2 id="queueTitle">待审核</h2>
+            </div>
+            <span id="queueCount" class="queue-count">0</span>
+          </div>
+
+          <div class="filter-tabs" role="tablist" aria-label="状态筛选">
+            <button class="filter-tab is-active" data-filter="pending" type="button" role="tab" aria-selected="true">待审</button>
+            <button class="filter-tab" data-filter="kept" type="button" role="tab" aria-selected="false">保留</button>
+            <button class="filter-tab" data-filter="skipped" type="button" role="tab" aria-selected="false">跳过</button>
+            <button class="filter-tab" data-filter="trash" type="button" role="tab" aria-selected="false">回收站</button>
+          </div>
+
+          <label class="search-box">
+            <span aria-hidden="true">⌕</span>
+            <input id="searchInput" type="search" placeholder="搜索 episode ID" autocomplete="off" />
+            <button id="clearSearchButton" type="button" title="清空搜索" aria-label="清空搜索">×</button>
+          </label>
+
+          <div id="queueLoading" class="queue-message">
+            <span class="spinner"></span><span>正在加载数据…</span>
+          </div>
+          <div id="queueEmpty" class="queue-message is-hidden">当前筛选下没有数据</div>
+          <ol id="episodeList" class="episode-list" aria-label="Episode 列表"></ol>
+
+          <div class="queue-footer">
+            <button id="queuePreviousButton" type="button">← 上一条</button>
+            <span id="queuePosition">— / —</span>
+            <button id="queueNextButton" type="button">下一条 →</button>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <dialog id="deleteDialog" class="confirm-dialog" aria-labelledby="deleteDialogTitle">
+      <form method="dialog">
+        <div class="dialog-icon" aria-hidden="true">!</div>
+        <h2 id="deleteDialogTitle">将这条数据移入回收站？</h2>
+        <p>
+          Episode <strong id="deleteEpisodeId">—</strong> 将从数据集中移出，但可以从回收站恢复。
+        </p>
+        <label class="dialog-field">
+          <span>不合格原因</span>
+          <select id="deleteReason">
+            <option value="camera_quality">相机画面质量问题</option>
+            <option value="camera_missing">相机缺帧或丢失</option>
+            <option value="sync_error">三路视频不同步</option>
+            <option value="task_failed">任务执行失败</option>
+            <option value="pose_error">hand_pose 异常</option>
+            <option value="other">其他</option>
+          </select>
+        </label>
+        <label class="dialog-field">
+          <span>备注（可选）</span>
+          <textarea id="deleteNote" rows="3" maxlength="500" placeholder="记录方便后续追溯的问题"></textarea>
+        </label>
+        <div class="dialog-actions">
+          <button id="cancelDeleteButton" class="secondary-button" value="cancel" type="button">取消</button>
+          <button id="confirmDeleteButton" class="danger-button" value="confirm" type="button">确认移入回收站</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

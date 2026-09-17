@@ -1,4 +1,49 @@
-.replay_cache/
-replay_videos/
+# Python
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor / OS
+.DS_Store
+*.swp
+*~
+
+# Review / data-choose runtime (local state, not source)
+data_choose/runtime/
+data_choose/runtime_*/
+data_choose/cache/
+data_choose/state/
+.review_token
+review_token
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Generated media and caches
+random_replay_5090/cache/
+random_replay_5090/videos/
+review_tools/cache/
+review_tools/reports/
+review_tools/*.log
+review_tools/*.pid
+
+# Training run artifacts
+training_tools/logs/
+*.log
+*.pid
+*.lock
+inspect.json
+inspect.original.json
+pipeline.status.json
+pipeline_status.json
+continuation_status.json
+pair.status.json
+conversion.launch.json
+launcher.start.json
+smoke.report.json
+startup_verification.json
+restart_w128_stop.json
+camera_mapping_preview/
+camera_mapping_fix_validation.json

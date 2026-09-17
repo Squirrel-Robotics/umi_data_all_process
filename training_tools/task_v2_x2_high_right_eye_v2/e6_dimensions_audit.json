@@ -1,0 +1,786 @@
+{
+  "source_root": "/mnt/data/dzq/umi_v2/data/task_v2_x2",
+  "selection_path": "/home/dzq/data_deal/training_tools/task_v2_x2_high/selected_85_episodes.txt",
+  "selection_sha256": "10529d85a309173ca01348bb092ca36278d8064737656b88994baa90152f4b2b",
+  "selected_episode_count": 85,
+  "probe_concurrency": 4,
+  "probe_size_bytes": 32768,
+  "probe_analyzeduration": 0,
+  "elapsed_seconds": 3.1204751079785638,
+  "actual_dimensions_distribution": {
+    "3840x1200": 85
+  },
+  "declared_dimensions_distribution": {
+    "3200x1200": 85
+  },
+  "dimension_metadata_mismatch_count": 85,
+  "failed_count": 0,
+  "raw_source_modified": false,
+  "rows": [
+    {
+      "episode_id": "20260908_170805_333295581_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171009_596665057_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171053_158245494_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171121_482307883_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171143_731465185_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171308_735720809_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171443_927123979_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171507_898707408_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171537_808384713_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171604_192446101_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171646_852559538_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171725_395364556_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171749_604742943_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171811_741989787_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171835_672370048_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_171900_215417143_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172006_980467800_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172059_150322742_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172124_009717920_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172145_404850139_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172208_991086192_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172230_354702369_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172341_216433611_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172404_959429997_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172425_418676507_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172510_362150861_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172532_151079164_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172551_551263298_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172612_551961849_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172810_168652239_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172828_986051373_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172852_760936551_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_172913_008592311_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173026_532094262_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173208_756515853_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173231_536583489_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173253_037246832_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173315_079862134_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173338_995927104_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173359_796888531_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173605_285968215_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173627_424208476_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173753_377384684_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173815_778164611_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173837_608321455_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173859_440995673_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173922_959942476_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_173943_193786944_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_174004_914991705_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_174027_853840632_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_174129_226963370_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_174227_258154564_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_174326_324877051_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_174353_611246605_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_175026_808150835_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_175158_362659962_86862",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_180434_798070531_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_181645_874379254_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_181736_863681279_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_181758_256340747_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_182120_566363094_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_182159_285613029_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_182316_363794315_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_182338_264893243_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_182609_643206940_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_183229_283029454_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_183249_392319422_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_183309_997691223_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_183430_639051304_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184019_442443178_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184210_109030731_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184321_561500140_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184444_243752805_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184549_404318294_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184620_317946975_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184639_904349776_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184702_627802579_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184741_050047180_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184815_067395947_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_184833_660368372_96413",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_190306_383493663_104264",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_190530_739323941_104264",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_190843_166671324_104264",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_195451_934346519_132696",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    },
+    {
+      "episode_id": "20260908_195847_587439715_132696",
+      "declared_width": 3200,
+      "declared_height": 1200,
+      "decoded_width": 3840,
+      "decoded_height": 1200,
+      "status": "ok",
+      "metadata_dimensions_match": false
+    }
+  ]
+}

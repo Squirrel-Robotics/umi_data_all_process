@@ -66,18 +66,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--converter",
         type=Path,
-        default=PROJECT_DIR / "controller_to_hand_pose.py",
+        default=PROJECT_DIR / "controller_to_hand_pose_v2.py",
         help="控制器到 hand_pose.csv 的转换脚本",
     )
     parser.add_argument(
         "--cache-dir",
         type=Path,
-        default=PROJECT_DIR / ".replay_cache",
+        default=SCRIPT_DIR / "cache",
         help="本机临时回放缓存目录",
     )
     parser.add_argument(
         "--remote-host",
-        default="dzq@192.168.110.199",
+        default="dzq@192.168.110.8",
         help="5090 SSH 主机",
     )
     parser.add_argument(
@@ -103,7 +103,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--video-dir",
         type=Path,
-        default=PROJECT_DIR / "replay_videos",
+        default=SCRIPT_DIR / "videos",
         help="数据服务器上的默认 MP4 输出目录",
     )
     parser.add_argument(

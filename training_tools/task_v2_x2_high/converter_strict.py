@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""Convert the native ``task_v1`` UMI layout to LeRobot v2.1.
+"""Convert one same-layout UMI task folder to LeRobot v2.1.
 
 This converter implements the following *explicit* data contract:
 
-* output rate: 10 Hz;
+* output rate is selected with ``--fps``;
 * state[t] is 30-D: left/right ``inverse(T[t-1]) @ T[t]`` encoded as
   translation3 + rotation-6D6, followed by left/right absolute finger6;
 * action[t, k] is 30-D: left/right ``inverse(T[t]) @ T[t+k]`` followed by
-  the left/right absolute finger targets at t+k, k=1..50;
-* every action in the H=50 chunk uses the same current T[t] anchor;
-* after the one-sample state baseline of each valid run, every real aligned
+  the left/right absolute finger targets at t+k, k=1..H;
+* H is selected with ``--action-horizon`` and every action in the chunk uses
+  the same current T[t] anchor;
+* after the one-sample state baseline, every real aligned
   observation/video row is preserved; action slots beyond that run boundary
   repeat its terminal target and are explicitly masked by ``action_is_pad``
   (videos are never padded); singleton runs cannot form a state and are
@@ -24,11 +25,11 @@ assumes that equal video frame numbers are synchronized.  For each episode it:
 1. reads E6 global timestamps from ``sync/e6_rgb_timing.csv``;
 2. reads camera timestamps from the original customer-camera ``frames.csv``;
 3. independently matches the nearest cam0/cam1 frame by timestamp;
-4. builds the E6 10 Hz grid, then retains every contiguous, strictly
-   monotonic, one-to-one interval with at least two samples for which both
-   camera deltas are within the configured limit (100 ms by default); each
-   retained interval becomes an independent LeRobot episode, so neither state
-   nor action can cross an invalid alignment boundary;
+4. builds the requested output-rate grid and requires exactly one contiguous,
+   strictly monotonic, one-to-one interval with at least two samples; invalid
+   prefix/suffix samples and singleton runs are audited, but a second run with
+   two or more samples rejects that source directory instead of splitting or
+   concatenating it;
 5. records every selected source frame index and signed timestamp delta.
 
 Dual-hand transforms are reconstructed only from ``camera/hand_pose.csv``.  The
@@ -45,6 +46,16 @@ The native files retain acquisition IDs cam0/cam1.  This task's established
 OpenPI contract maps them to the canonical LeRobot keys ``left_wrist_rgb`` and
 ``right_wrist_rgb`` respectively; the source acquisition IDs remain recorded
 in every row and in the conversion audit.
+
+Every visible direct child of ``--source`` must be one native episode directory;
+hidden children are ignored but recorded in the audit.  By default every valid
+episode is converted.  ``--episode-list`` may instead select an explicit ordered
+allowlist of episode basenames; unselected valid episodes, the exact allowlist,
+and its SHA-256 are recorded in the audit.  Selected source and output have a
+strict one-to-one relationship: one source directory becomes exactly one
+LeRobot episode whose source ID is unchanged.  A source/selection snapshot is
+compared again immediately before publication so concurrent acquisition or an
+edited allowlist cannot leak into the dataset.
 
 The source directory is read-only.  Conversion is staged beside the target and
 atomically published only after all episodes, parquet files, videos, metadata,
@@ -72,11 +83,6 @@ from typing import Any, Sequence
 import numpy as np
 
 
-DEFAULT_SOURCE = Path("/mnt/data/dzq/umi/data/task_v1")
-DEFAULT_TARGET = Path("/mnt/data/dzq/umi/datasets/task_v1_lerobot_h50")
-DEFAULT_REPO_ID = "local/task_v1_lerobot_h50"
-OUTPUT_FPS = 10
-ACTION_HORIZON = 50
 DEFAULT_MAX_ALIGNMENT_MS = 100.0
 DEFAULT_MAX_HAND_AGE_MS = 100.0
 POSE_DIM = 9
@@ -145,11 +151,7 @@ class CameraSeries:
 class EpisodePlan:
     files: EpisodeFiles
     source_episode_index: int
-    segment_index: int
-    segment_count: int
-    valid_run_index: int
-    valid_run_count: int
-    output_segment_id: str
+    output_episode_id: str
     e6_rows: list[dict[str, str]]
     source_cam0_association_rows: list[dict[str, Any]]
     source_cam1_association_rows: list[dict[str, Any]]
@@ -165,7 +167,7 @@ class EpisodePlan:
     state: np.ndarray
     action: np.ndarray
     action_is_pad: np.ndarray
-    sample_valid_h50: np.ndarray
+    sample_valid_action_horizon: np.ndarray
     source_fps: int
     source_stride: int
     camera_ratio: int
@@ -174,14 +176,6 @@ class EpisodePlan:
     strict_run_start: int
     strict_run_end_exclusive: int
     output_count: int
-    quality: dict[str, Any]
-
-
-@dataclass
-class SourceEpisodePlan:
-    files: EpisodeFiles
-    source_episode_index: int
-    segments: list[EpisodePlan]
     quality: dict[str, Any]
 
 
@@ -273,30 +267,141 @@ def locate_episode_files(episode: Path) -> EpisodeFiles:
     return files
 
 
+def read_episode_list(path: Path) -> tuple[list[str], dict[str, Any]]:
+    """Read a strict newline-delimited episode allowlist as data, never commands."""
+    resolved = path.expanduser().resolve(strict=True)
+    if not resolved.is_file():
+        raise FileNotFoundError(f"episode list is not a regular file: {resolved}")
+    raw = resolved.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"episode list must be UTF-8 text: {resolved}") from error
+    episode_ids = text.splitlines()
+    if not episode_ids:
+        raise ValueError(f"episode list is empty: {resolved}")
+    invalid = [
+        {"line": index, "value": value}
+        for index, value in enumerate(episode_ids, start=1)
+        if not value or value != value.strip() or not EPISODE_PATTERN.fullmatch(value)
+    ]
+    if invalid:
+        raise ValueError(f"episode list contains invalid lines: {invalid}")
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for episode_id in episode_ids:
+        if episode_id in seen and episode_id not in duplicates:
+            duplicates.append(episode_id)
+        seen.add(episode_id)
+    if duplicates:
+        raise ValueError(f"episode list contains duplicate IDs: {duplicates}")
+    return episode_ids, {
+        "mode": "explicit_allowlist",
+        "episode_list_path": str(resolved),
+        "dataset_copy_path": "meta/episode_selection.txt",
+        "episode_list_sha256": hashlib.sha256(raw).hexdigest(),
+        "episode_list_size_bytes": len(raw),
+        "episode_list_count": len(episode_ids),
+    }
+
+
 def discover_episodes(
-    root: Path, only: Sequence[str], exclude: Sequence[str]
-) -> list[Path]:
+    root: Path,
+    selected_episode_ids: Sequence[str] | None = None,
+) -> tuple[list[Path], list[str]]:
     if not root.is_dir():
         raise FileNotFoundError(root)
-    episodes = sorted(
-        path for path in root.iterdir()
-        if path.is_dir() and EPISODE_PATTERN.fullmatch(path.name)
-    )
-    only_set = set(only)
-    exclude_set = set(exclude)
-    if only_set & exclude_set:
-        raise ValueError(f"episode present in both --only and --exclude: {sorted(only_set & exclude_set)}")
-    available = {path.name for path in episodes}
-    unknown = (only_set | exclude_set) - available
-    if unknown:
-        raise ValueError(f"unknown episode IDs: {sorted(unknown)}")
-    if only_set:
-        episodes = [path for path in episodes if path.name in only_set]
-    if exclude_set:
-        episodes = [path for path in episodes if path.name not in exclude_set]
+    children = sorted(root.iterdir(), key=lambda path: path.name)
+    hidden_directories = [path.name for path in children if path.is_dir() and path.name.startswith(".")]
+    visible = [path for path in children if not path.name.startswith(".")]
+    invalid = [
+        {
+            "name": path.name,
+            "reason": (
+                "symbolic_link" if path.is_symlink()
+                else "not_a_directory" if not path.is_dir()
+                else "episode_id_pattern_mismatch"
+            ),
+        }
+        for path in visible
+        if path.is_symlink() or not path.is_dir() or not EPISODE_PATTERN.fullmatch(path.name)
+    ]
+    if invalid:
+        raise ValueError(
+            "visible source entries must be real episode directories: "
+            f"{invalid}; move or rename them instead of silently excluding data"
+        )
+    if selected_episode_ids is None:
+        episodes = visible
+    else:
+        available = {path.name: path for path in visible}
+        missing = [episode_id for episode_id in selected_episode_ids if episode_id not in available]
+        if missing:
+            raise FileNotFoundError(
+                f"episode list references IDs missing from {root}: {missing}"
+            )
+        episodes = [available[episode_id] for episode_id in selected_episode_ids]
     if not episodes:
         raise ValueError("no source episodes selected")
-    return episodes
+    return episodes, hidden_directories
+
+
+def episode_selection_record(
+    root: Path,
+    episodes: Sequence[Path],
+    base_record: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if base_record is None:
+        return None
+    visible_episode_ids = sorted(
+        path.name
+        for path in root.iterdir()
+        if not path.name.startswith(".") and path.is_dir() and not path.is_symlink()
+    )
+    selected_episode_ids = [episode.name for episode in episodes]
+    selected = set(selected_episode_ids)
+    return {
+        **base_record,
+        "visible_episode_count": len(visible_episode_ids),
+        "selected_episode_count": len(selected_episode_ids),
+        "selected_episode_ids": selected_episode_ids,
+        "unselected_episode_count": len(visible_episode_ids) - len(selected_episode_ids),
+        "unselected_episode_ids": [
+            episode_id for episode_id in visible_episode_ids if episode_id not in selected
+        ],
+    }
+
+
+def source_snapshot(
+    root: Path,
+    episodes: Sequence[Path],
+    hidden_directories: Sequence[str],
+    selection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Capture the complete episode-tree stat snapshot without modifying source."""
+    records: list[dict[str, Any]] = []
+    for episode in episodes:
+        for path in sorted(episode.rglob("*"), key=lambda item: str(item.relative_to(root))):
+            if not path.is_file():
+                continue
+            stat = path.stat()
+            records.append({
+                "episode_id": episode.name,
+                "path": str(path.relative_to(root)),
+                "size_bytes": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            })
+    value = {
+        "source": str(root),
+        "episode_ids": [path.name for path in episodes],
+        "hidden_directories_ignored": list(hidden_directories),
+        "required_files": records,
+    }
+    if selection is not None:
+        value["episode_selection"] = selection
+    canonical = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    value["sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return value
 
 
 def measured_fps(timestamp_ns: np.ndarray) -> float:
@@ -368,7 +473,7 @@ def valid_sample_sequences(
 
     ``transition_valid[i]`` describes the edge from sample ``i-1`` to ``i``.
     A failed incoming edge does not prevent sample ``i`` from becoming the
-    baseline of a new sequence; this avoids dropping one extra 10 Hz point at
+    baseline of a new sequence; this avoids dropping one extra output-grid point at
     every discontinuity.
     """
     sample_valid = np.asarray(sample_valid, dtype=bool)
@@ -391,6 +496,27 @@ def valid_sample_sequences(
     if start is not None:
         runs.append((start, len(sample_valid)))
     return runs
+
+
+def require_single_emittable_run(
+    runs: Sequence[tuple[int, int]], episode_id: str
+) -> tuple[int, int, int]:
+    substantial = [
+        (index, start, end)
+        for index, (start, end) in enumerate(runs)
+        if end - start >= 2
+    ]
+    if not substantial:
+        raise ValueError(
+            f"{episode_id}: all {len(runs)} valid runs are singletons; "
+            "at least two samples are required to form state"
+        )
+    if len(substantial) > 1:
+        raise ValueError(
+            f"{episode_id}: multiple_valid_runs would split one source directory "
+            f"into {len(substantial)} episodes; refusing: {substantial}"
+        )
+    return substantial[0]
 
 
 def transforms_from_pose7(position: np.ndarray, quaternion: np.ndarray) -> np.ndarray:
@@ -486,21 +612,24 @@ def decode_absolute_hand_packets(
 ) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
     rows = read_csv(path)
     selected: list[dict[str, str]] = []
+    selected_row_indices: list[int] = []
     decoded: list[list[int]] = []
-    for row in rows:
+    for row_index, row in enumerate(rows):
         if row.get("packet_type_name") != "HAND_STATE_FRAME" or row.get("payload_status") != "full":
             continue
         values = [int(value) for value in row["decoded_values"].split(";")]
         if len(values) != 25:
             raise ValueError(f"{path}: HAND_STATE_FRAME does not contain 25 values")
         selected.append(row)
+        selected_row_indices.append(row_index)
         decoded.append(values)
     if not selected:
         raise ValueError(f"{path}: no full HAND_STATE_FRAME packets")
     deduplicated_rows: list[dict[str, str]] = []
+    deduplicated_row_indices: list[int] = []
     deduplicated_values: list[list[int]] = []
     duplicate_timestamps = 0
-    for row, values in zip(selected, decoded):
+    for row_index, row, values in zip(selected_row_indices, selected, decoded):
         timestamp = int(row["host_rx_time_ns"])
         if deduplicated_rows:
             previous_timestamp = int(deduplicated_rows[-1]["host_rx_time_ns"])
@@ -509,16 +638,19 @@ def decode_absolute_hand_packets(
             if timestamp == previous_timestamp:
                 if values[:6] != deduplicated_values[-1][:6]:
                     raise ValueError(
-                        f"{path}: duplicate timestamp has conflicting joint positions"
+                        f"{path}: duplicate timestamp {timestamp} has conflicting joint positions: "
+                        f"row_indices=({deduplicated_row_indices[-1]},{row_index}), "
+                        f"first6=({deduplicated_values[-1][:6]},{values[:6]})"
                     )
-                # Stable source order makes the later row the best packet when
-                # timestamps collide (it also has the later packet sequence in
-                # the one observed task_v1 duplicate).
+                # Identical joint values at the same timestamp are harmless;
+                # keep the later source row deterministically for its metadata.
                 deduplicated_rows[-1] = row
+                deduplicated_row_indices[-1] = row_index
                 deduplicated_values[-1] = values
                 duplicate_timestamps += 1
                 continue
         deduplicated_rows.append(row)
+        deduplicated_row_indices.append(row_index)
         deduplicated_values.append(values)
     timestamp = np.asarray(
         [int(row["host_rx_time_ns"]) for row in deduplicated_rows], dtype=np.int64
@@ -575,13 +707,29 @@ def encode_relative(transforms: np.ndarray) -> np.ndarray:
     return np.concatenate([transforms[..., :3, 3], rot6d], axis=-1)
 
 
+def build_future_indices(
+    strict_length: int, action_horizon: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if strict_length < 2 or action_horizon <= 0:
+        raise ValueError("strict_length must be >=2 and action_horizon must be positive")
+    anchor_positions = np.arange(1, strict_length, dtype=np.int64)
+    requested = anchor_positions[:, None] + np.arange(
+        1, action_horizon + 1, dtype=np.int64
+    )[None, :]
+    action_is_pad = requested >= strict_length
+    future_positions = np.minimum(requested, strict_length - 1)
+    return anchor_positions, future_positions, action_is_pad
+
+
 def make_plan(
     files: EpisodeFiles,
     source_episode_index: int,
+    output_fps: int,
+    action_horizon: int,
     max_alignment_ns: int,
     max_hand_age_ns: int,
     hand_alignment: str,
-) -> SourceEpisodePlan:
+) -> EpisodePlan:
     clock = load_json(files.clock_model_json)
     if clock.get("status") != "ok":
         raise ValueError(f"{files.episode.name}: clock_model.status != ok")
@@ -700,12 +848,12 @@ def make_plan(
     e6_fps_float = 1e9 / float(np.median(e6_intervals_ns))
     e6_average_fps = measured_fps(e6_mid)
     source_fps = int(round(e6_fps_float))
-    if abs(e6_fps_float - source_fps) > 0.25 or source_fps % OUTPUT_FPS:
+    if abs(e6_fps_float - source_fps) > 0.25 or source_fps % output_fps:
         raise ValueError(
             f"{files.episode.name}: unsupported median E6 rate {e6_fps_float:.6f} Hz; "
-            f"must be an integer multiple of {OUTPUT_FPS} Hz"
+            f"must be an integer multiple of requested {output_fps} Hz"
         )
-    source_stride = source_fps // OUTPUT_FPS
+    source_stride = source_fps // output_fps
     nominal_interval_ns = int(round(1e9 / source_fps))
     interval_tolerance_ns = max(2_000_000, int(round(nominal_interval_ns * 0.10)))
     e6_interval_ok = np.ones(len(e6_mid), dtype=bool)
@@ -735,10 +883,10 @@ def make_plan(
         )
 
     # Recompute nearest matches for every E6 exposure for audit, but enforce
-    # uniqueness on the requested 10 Hz output grid.  Enforcing one-to-one at
-    # the native 60 Hz rate before downsampling would reject useful 10 Hz data
+    # uniqueness on the requested output grid.  Enforcing one-to-one at
+    # the native E6 rate before downsampling would reject useful output data
     # whenever camera jitter maps two adjacent raw E6 frames to one camera
-    # frame, even though the selected 10 Hz frames remain unique.
+    # frame, even though the selected output frames remain unique.
     cam0_nearest_row = nearest_indices(cam0.timestamp_ns, e6_global)
     cam1_nearest_row = nearest_indices(cam1.timestamp_ns, e6_global)
     cam0_nearest = cam0.frame_index[cam0_nearest_row]
@@ -766,17 +914,36 @@ def make_plan(
         )
     runs = valid_sample_sequences(grid_sample_valid, grid_transition_valid)
     if not runs:
-        raise ValueError(f"{files.episode.name}: no valid 10 Hz three-camera alignment run")
-    emitted_runs = [
-        (valid_run_index, run_start, run_end)
-        for valid_run_index, (run_start, run_end) in enumerate(runs)
-        if run_end - run_start >= 2
-    ]
-    if not emitted_runs:
         raise ValueError(
-            f"{files.episode.name}: all {len(runs)} valid 10 Hz runs are singletons; "
-            "at least two samples are required to form state"
+            f"{files.episode.name}: no valid {output_fps} Hz three-camera alignment run"
         )
+    try:
+        valid_run_index, run_start, run_end = require_single_emittable_run(
+            runs, files.episode.name
+        )
+    except ValueError as error:
+        if "multiple_valid_runs" not in str(error):
+            raise
+        substantial_runs = [
+            (index, start, end)
+            for index, (start, end) in enumerate(runs)
+            if end - start >= 2
+        ]
+        details = [
+            {
+                "valid_run_index": index,
+                "grid_start": start,
+                "grid_end_exclusive": end,
+                "sample_count": end - start,
+                "first_e6_source_row": int(e6_index[grid_rows[start]]),
+                "last_e6_source_row": int(e6_index[grid_rows[end - 1]]),
+            }
+            for index, start, end in substantial_runs
+        ]
+        raise ValueError(
+            f"{files.episode.name}: multiple_valid_runs would split one source directory "
+            f"into {len(substantial_runs)} episodes; refusing: {json.dumps(details, ensure_ascii=False)}"
+        ) from error
 
     recomputed_nearest_rows: list[dict[str, Any]] = []
     previous_cam0 = previous_cam1 = None
@@ -798,40 +965,29 @@ def make_plan(
         })
         previous_cam0, previous_cam1 = cam0_frame, cam1_frame
 
-    emitted_index_by_valid_run = {
-        valid_run_index: segment_index
-        for segment_index, (valid_run_index, _run_start, _run_end) in enumerate(emitted_runs)
-    }
     run_records: list[dict[str, Any]] = []
-    for valid_run_index, (run_start, run_end) in enumerate(runs):
-        run_rows = grid_rows[run_start:run_end]
-        segment_index = emitted_index_by_valid_run.get(valid_run_index)
+    for record_index, (record_start, record_end) in enumerate(runs):
+        run_rows = grid_rows[record_start:record_end]
+        emitted = record_index == valid_run_index
         record: dict[str, Any] = {
-            "valid_run_index": valid_run_index,
-            "grid_start_index": run_start,
-            "grid_end_index_exclusive": run_end,
+            "valid_run_index": record_index,
+            "grid_start_index": record_start,
+            "grid_end_index_exclusive": record_end,
             "sample_count": len(run_rows),
             "first_e6_source_row": int(e6_index[run_rows[0]]),
             "last_e6_source_row": int(e6_index[run_rows[-1]]),
             "first_e6_frame_id": int(e6_frame_id[run_rows[0]]),
             "last_e6_frame_id": int(e6_frame_id[run_rows[-1]]),
-            "emitted": segment_index is not None,
-            "segment_index": segment_index,
-            "output_segment_id": (
-                f"{files.episode.name}__segment_{segment_index:03d}"
-                if segment_index is not None else None
-            ),
+            "emitted": emitted,
+            "output_episode_id": files.episode.name if emitted else None,
         }
-        if segment_index is None:
+        if not emitted:
             record["discard_reason"] = (
                 "singleton valid run cannot form inv(T[t-1]) @ T[t] state"
             )
         run_records.append(record)
 
-    emitted_sample_rows = np.concatenate([
-        grid_rows[run_start:run_end]
-        for _valid_run_index, run_start, run_end in emitted_runs
-    ])
+    emitted_sample_rows = grid_rows[run_start:run_end]
     source_quality_common = {
         "episode_id": files.episode.name,
         "source_episode_id": files.episode.name,
@@ -862,7 +1018,7 @@ def make_plan(
             "alignment_policy": hand_alignment,
             "max_hand_age_ns": max_hand_age_ns,
             "pair_fresh_within_limit_rows": int(pair_hand_fresh.sum()),
-            "pair_fresh_on_10hz_grid_rows": int(pair_hand_fresh[grid_rows].sum()),
+            "pair_fresh_on_output_grid_rows": int(pair_hand_fresh[grid_rows].sum()),
             "left_max_fresh_abs_delta_ns": int(
                 np.abs(left_hand_delta[left_hand_fresh]).max(initial=0)
             ),
@@ -882,195 +1038,149 @@ def make_plan(
         "camera_to_e6_integer_ratio": camera_ratio,
         "cam0_median_frame_offset": cam0_offset,
         "cam1_median_frame_offset": cam1_offset,
-        "candidate_10hz_grid_points": len(grid_rows),
+        "candidate_output_grid_points": len(grid_rows),
         "valid_sample_sequence_count": len(runs),
-        "emitted_segment_count": len(emitted_runs),
-        "discarded_singleton_sequence_count": len(runs) - len(emitted_runs),
+        "emitted_episode_count": 1,
+        "discarded_singleton_sequence_count": len(runs) - 1,
         "valid_sample_sequences": run_records,
         "discarded_singleton_sequences": [
             record for record in run_records if not record["emitted"]
         ],
-        "valid_10hz_grid_points": int(sum(end - start for start, end in runs)),
-        "emitted_10hz_grid_points": len(emitted_sample_rows),
-        "strict_10hz_grid_points": len(emitted_sample_rows),
-        "strict_10hz_retention_ratio": len(emitted_sample_rows) / len(grid_rows),
+        "valid_output_grid_points": int(sum(end - start for start, end in runs)),
+        "emitted_output_grid_points": len(emitted_sample_rows),
+        "strict_output_grid_points": len(emitted_sample_rows),
+        "strict_output_grid_retention_ratio": len(emitted_sample_rows) / len(grid_rows),
         "strict_cam0_max_abs_delta_ns": int(
             np.max(np.abs(cam0_delta[emitted_sample_rows]))
         ),
         "strict_cam1_max_abs_delta_ns": int(
             np.max(np.abs(cam1_delta[emitted_sample_rows]))
         ),
-        "output_fps": OUTPUT_FPS,
+        "output_fps": output_fps,
         "output_source_stride": source_stride,
-        "action_horizon": ACTION_HORIZON,
-        "action_horizon_seconds": ACTION_HORIZON / OUTPUT_FPS,
+        "action_horizon": action_horizon,
+        "action_horizon_seconds": action_horizon / output_fps,
         "tail_policy": "preserve observations/videos; repeat terminal action target only in explicitly masked slots",
     }
-    segments: list[EpisodePlan] = []
-    segment_count = len(emitted_runs)
-    for segment_index, (valid_run_index, run_start, run_end) in enumerate(emitted_runs):
-        sample_rows = grid_rows[run_start:run_end]
-        strict_length = len(sample_rows)
-        # One sample is needed before the first output state.  Every remaining
-        # aligned observation is preserved.  Future action slots past this
-        # segment boundary repeat its terminal target and carry an explicit
-        # pad mask; no video frame is synthesized or repeated, and an action
-        # can never cross into a later valid run.
-        output_count = strict_length - 1
-        anchor_positions = np.arange(1, 1 + output_count, dtype=np.int64)
-        previous_rows = sample_rows[anchor_positions - 1]
-        anchor_rows = sample_rows[anchor_positions]
-        requested_future_positions = anchor_positions[:, None] + np.arange(
-            1, ACTION_HORIZON + 1, dtype=np.int64
-        )[None, :]
-        action_is_pad = requested_future_positions >= strict_length
-        future_positions = np.minimum(requested_future_positions, strict_length - 1)
-        target_rows = sample_rows[future_positions]
-        sample_valid_h50 = ~np.any(action_is_pad, axis=1)
-        state_eef: list[np.ndarray] = []
-        action_eef: list[np.ndarray] = []
-        for side in SIDES:
-            absolute = hand_trajectories[side]
-            state_eef.append(
-                encode_relative(invert(absolute[previous_rows]) @ absolute[anchor_rows])
-            )
-            action_eef.append(
-                encode_relative(
-                    invert(absolute[anchor_rows])[:, None] @ absolute[target_rows]
-                )
-            )
-        state = np.concatenate(
-            [state_eef[0], state_eef[1], absolute_hands12[anchor_rows]], axis=1
-        ).astype(np.float32)
-        action = np.concatenate(
-            [action_eef[0], action_eef[1], absolute_hands12[target_rows]], axis=2
-        ).astype(np.float32)
-        if state.shape != (output_count, STATE_DIM):
-            raise AssertionError("state shape changed")
-        if action.shape != (output_count, ACTION_HORIZON, STATE_DIM):
-            raise AssertionError("action shape changed")
-        if action_is_pad.shape != (output_count, ACTION_HORIZON):
-            raise AssertionError("action pad-mask shape changed")
-        if not np.isfinite(state).all() or not np.isfinite(action).all():
-            raise ValueError(f"{files.episode.name}: state/action contains NaN or Inf")
-        # k=1 is the next adjacent 10 Hz delta.  It should equal the next
-        # state, except for the last emitted row whose next state is not an
-        # emitted observation.
-        if output_count > 1 and not np.allclose(action[:-1, 0], state[1:], atol=2e-6):
-            raise AssertionError("shared-anchor k=1 does not match next adjacent state")
+    sample_rows = grid_rows[run_start:run_end]
+    strict_length = len(sample_rows)
+    output_count = strict_length - 1
+    anchor_positions, future_positions, action_is_pad = build_future_indices(
+        strict_length, action_horizon
+    )
+    previous_rows = sample_rows[anchor_positions - 1]
+    anchor_rows = sample_rows[anchor_positions]
+    target_rows = sample_rows[future_positions]
+    sample_valid_action_horizon = ~np.any(action_is_pad, axis=1)
+    state_eef: list[np.ndarray] = []
+    action_eef: list[np.ndarray] = []
+    for side in SIDES:
+        absolute = hand_trajectories[side]
+        state_eef.append(
+            encode_relative(invert(absolute[previous_rows]) @ absolute[anchor_rows])
+        )
+        action_eef.append(
+            encode_relative(invert(absolute[anchor_rows])[:, None] @ absolute[target_rows])
+        )
+    state = np.concatenate(
+        [state_eef[0], state_eef[1], absolute_hands12[anchor_rows]], axis=1
+    ).astype(np.float32)
+    action = np.concatenate(
+        [action_eef[0], action_eef[1], absolute_hands12[target_rows]], axis=2
+    ).astype(np.float32)
+    if state.shape != (output_count, STATE_DIM):
+        raise AssertionError("state shape changed")
+    if action.shape != (output_count, action_horizon, STATE_DIM):
+        raise AssertionError("action shape changed")
+    if action_is_pad.shape != (output_count, action_horizon):
+        raise AssertionError("action pad-mask shape changed")
+    if not np.isfinite(state).all() or not np.isfinite(action).all():
+        raise ValueError(f"{files.episode.name}: state/action contains NaN or Inf")
+    if output_count > 1 and not np.allclose(action[:-1, 0], state[1:], atol=2e-6):
+        raise AssertionError("shared-anchor k=1 does not match next adjacent state")
 
-        output_anchor_set = set(anchor_rows.tolist())
-        action_target_set = set(target_rows.reshape(-1).tolist())
-        strict_rows: list[dict[str, Any]] = []
-        for position, row in enumerate(sample_rows):
-            strict_rows.append({
-                "source_grid_index": run_start + position,
-                "segment_grid_index": position,
-                "valid_run_index": valid_run_index,
-                "segment_index": segment_index,
-                "is_output_anchor": int(int(row) in output_anchor_set),
-                "is_action_target": int(int(row) in action_target_set),
-                "e6_source_row_index": int(e6_index[row]),
-                "e6_frame_id": int(e6_frame_id[row]),
-                "hand_pose_timestamp_ns": int(e6_mid[row]),
-                "e6_global_ts_ns": int(e6_global[row]),
-                "cam0_frame_index": int(cam0_nearest[row]),
-                "cam0_signed_delta_ns": int(cam0_delta[row]),
-                "cam1_frame_index": int(cam1_nearest[row]),
-                "cam1_signed_delta_ns": int(cam1_delta[row]),
-                "left_hand_packet_row": int(left_hand_source_row[row]),
-                "left_hand_signed_delta_ns": int(left_hand_delta[row]),
-                "right_hand_packet_row": int(right_hand_source_row[row]),
-                "right_hand_signed_delta_ns": int(right_hand_delta[row]),
-            })
-
-        anchor_e6 = e6_index[anchor_rows]
-        output_segment_id = f"{files.episode.name}__segment_{segment_index:03d}"
-        quality = {
-            **source_quality_common,
-            "output_segment_id": output_segment_id,
-            "segment_index": segment_index,
-            "segment_count": segment_count,
+    output_anchor_set = set(anchor_rows.tolist())
+    action_target_set = set(target_rows.reshape(-1).tolist())
+    strict_rows: list[dict[str, Any]] = []
+    for position, row in enumerate(sample_rows):
+        strict_rows.append({
+            "source_grid_index": run_start + position,
+            "episode_grid_index": position,
             "valid_run_index": valid_run_index,
-            "valid_run_count": len(runs),
-            "strict_run_grid_start_index": run_start,
-            "strict_run_grid_end_index_exclusive": run_end,
-            "strict_run_first_e6_source_row": int(e6_index[sample_rows[0]]),
-            "strict_run_last_e6_source_row": int(e6_index[sample_rows[-1]]),
-            "strict_run_first_e6_frame_id": int(e6_frame_id[sample_rows[0]]),
-            "strict_run_last_e6_frame_id": int(e6_frame_id[sample_rows[-1]]),
-            "strict_run_rows": strict_length,
-            "strict_10hz_grid_points": strict_length,
-            "strict_10hz_retention_ratio": strict_length / len(grid_rows),
-            "strict_cam0_max_abs_delta_ns": int(
-                np.max(np.abs(cam0_delta[sample_rows]))
-            ),
-            "strict_cam1_max_abs_delta_ns": int(
-                np.max(np.abs(cam1_delta[sample_rows]))
-            ),
-            "output_rows": output_count,
-            "sample_valid_h50_rows": int(sample_valid_h50.sum()),
-            "terminal_padded_anchor_rows": int((~sample_valid_h50).sum()),
-            "terminal_padded_action_slots": int(action_is_pad.sum()),
-            "output_first_e6_source_row": int(anchor_e6[0]),
-            "output_last_e6_source_row": int(anchor_e6[-1]),
-            "output_first_e6_frame_id": int(e6_frame_id[anchor_rows][0]),
-            "output_last_e6_frame_id": int(e6_frame_id[anchor_rows][-1]),
-        }
-        segments.append(EpisodePlan(
-            files=files,
-            source_episode_index=source_episode_index,
-            segment_index=segment_index,
-            segment_count=segment_count,
-            valid_run_index=valid_run_index,
-            valid_run_count=len(runs),
-            output_segment_id=output_segment_id,
-            e6_rows=timing,
-            source_cam0_association_rows=source_cam0_association_rows,
-            source_cam1_association_rows=source_cam1_association_rows,
-            recomputed_nearest_rows=recomputed_nearest_rows,
-            strict_rows=strict_rows,
-            e6_source_row_indices=anchor_e6,
-            e6_frame_ids=e6_frame_id[anchor_rows],
-            cam0_frame_indices=cam0_nearest[anchor_rows],
-            cam1_frame_indices=cam1_nearest[anchor_rows],
-            cam0_signed_delta_ns=cam0_delta[anchor_rows],
-            cam1_signed_delta_ns=cam1_delta[anchor_rows],
-            hand_pose_timestamps_ns=e6_mid[anchor_rows],
-            state=state,
-            action=action,
-            action_is_pad=action_is_pad,
-            sample_valid_h50=sample_valid_h50,
-            source_fps=source_fps,
-            source_stride=source_stride,
-            camera_ratio=camera_ratio,
-            cam0_offset=cam0_offset,
-            cam1_offset=cam1_offset,
-            strict_run_start=int(sample_rows[0]),
-            strict_run_end_exclusive=int(sample_rows[-1]) + 1,
-            output_count=output_count,
-            quality=quality,
-        ))
+            "is_output_anchor": int(int(row) in output_anchor_set),
+            "is_action_target": int(int(row) in action_target_set),
+            "e6_source_row_index": int(e6_index[row]),
+            "e6_frame_id": int(e6_frame_id[row]),
+            "hand_pose_timestamp_ns": int(e6_mid[row]),
+            "e6_global_ts_ns": int(e6_global[row]),
+            "cam0_frame_index": int(cam0_nearest[row]),
+            "cam0_signed_delta_ns": int(cam0_delta[row]),
+            "cam1_frame_index": int(cam1_nearest[row]),
+            "cam1_signed_delta_ns": int(cam1_delta[row]),
+            "left_hand_packet_row": int(left_hand_source_row[row]),
+            "left_hand_signed_delta_ns": int(left_hand_delta[row]),
+            "right_hand_packet_row": int(right_hand_source_row[row]),
+            "right_hand_signed_delta_ns": int(right_hand_delta[row]),
+        })
 
-    source_quality = {
+    anchor_e6 = e6_index[anchor_rows]
+    quality = {
         **source_quality_common,
-        "output_segment_ids": [plan.output_segment_id for plan in segments],
-        "total_output_rows": int(sum(plan.output_count for plan in segments)),
-        "total_sample_valid_h50_rows": int(
-            sum(plan.sample_valid_h50.sum() for plan in segments)
-        ),
-        "total_terminal_padded_anchor_rows": int(
-            sum((~plan.sample_valid_h50).sum() for plan in segments)
-        ),
-        "total_terminal_padded_action_slots": int(
-            sum(plan.action_is_pad.sum() for plan in segments)
-        ),
+        "output_episode_id": files.episode.name,
+        "one_source_one_output_episode": True,
+        "valid_run_index": valid_run_index,
+        "valid_run_count": len(runs),
+        "strict_run_grid_start_index": run_start,
+        "strict_run_grid_end_index_exclusive": run_end,
+        "discarded_prefix_grid_points": run_start,
+        "discarded_suffix_grid_points": len(grid_rows) - run_end,
+        "strict_run_first_e6_source_row": int(e6_index[sample_rows[0]]),
+        "strict_run_last_e6_source_row": int(e6_index[sample_rows[-1]]),
+        "strict_run_first_e6_frame_id": int(e6_frame_id[sample_rows[0]]),
+        "strict_run_last_e6_frame_id": int(e6_frame_id[sample_rows[-1]]),
+        "strict_run_rows": strict_length,
+        "strict_output_grid_points": strict_length,
+        "strict_output_grid_retention_ratio": strict_length / len(grid_rows),
+        "strict_cam0_max_abs_delta_ns": int(np.max(np.abs(cam0_delta[sample_rows]))),
+        "strict_cam1_max_abs_delta_ns": int(np.max(np.abs(cam1_delta[sample_rows]))),
+        "output_rows": output_count,
+        "sample_valid_action_horizon_rows": int(sample_valid_action_horizon.sum()),
+        "terminal_padded_anchor_rows": int((~sample_valid_action_horizon).sum()),
+        "terminal_padded_action_slots": int(action_is_pad.sum()),
+        "output_first_e6_source_row": int(anchor_e6[0]),
+        "output_last_e6_source_row": int(anchor_e6[-1]),
+        "output_first_e6_frame_id": int(e6_frame_id[anchor_rows][0]),
+        "output_last_e6_frame_id": int(e6_frame_id[anchor_rows][-1]),
     }
-    return SourceEpisodePlan(
+    return EpisodePlan(
         files=files,
         source_episode_index=source_episode_index,
-        segments=segments,
-        quality=source_quality,
+        output_episode_id=files.episode.name,
+        e6_rows=timing,
+        source_cam0_association_rows=source_cam0_association_rows,
+        source_cam1_association_rows=source_cam1_association_rows,
+        recomputed_nearest_rows=recomputed_nearest_rows,
+        strict_rows=strict_rows,
+        e6_source_row_indices=anchor_e6,
+        e6_frame_ids=e6_frame_id[anchor_rows],
+        cam0_frame_indices=cam0_nearest[anchor_rows],
+        cam1_frame_indices=cam1_nearest[anchor_rows],
+        cam0_signed_delta_ns=cam0_delta[anchor_rows],
+        cam1_signed_delta_ns=cam1_delta[anchor_rows],
+        hand_pose_timestamps_ns=e6_mid[anchor_rows],
+        state=state,
+        action=action,
+        action_is_pad=action_is_pad,
+        sample_valid_action_horizon=sample_valid_action_horizon,
+        source_fps=source_fps,
+        source_stride=source_stride,
+        camera_ratio=camera_ratio,
+        cam0_offset=cam0_offset,
+        cam1_offset=cam1_offset,
+        strict_run_start=int(sample_rows[0]),
+        strict_run_end_exclusive=int(sample_rows[-1]) + 1,
+        output_count=output_count,
+        quality=quality,
     )
 
 
@@ -1098,6 +1208,7 @@ def encode_frame_selection(
     height: int,
     resize_mode: str,
     crf: int,
+    output_fps: int,
     source_crop: str | None = None,
     input_format: str | None = None,
 ) -> dict[str, Any]:
@@ -1116,7 +1227,7 @@ def encode_frame_selection(
     if source_crop is not None:
         filters.append(source_crop)
     filters.extend((
-        f"setpts=N/({OUTPUT_FPS}*TB)",
+        f"setpts=N/({output_fps}*TB)",
         resize_filter(width, height, resize_mode),
     ))
     input_args = ["-f", input_format] if input_format is not None else []
@@ -1124,7 +1235,7 @@ def encode_frame_selection(
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *input_args,
         "-i", str(source),
         "-an", "-vf", ",".join(filters), "-c:v", "libx264", "-preset", "medium",
-        "-crf", str(crf), "-pix_fmt", "yuv420p", "-r", str(OUTPUT_FPS),
+        "-crf", str(crf), "-pix_fmt", "yuv420p", "-r", str(output_fps),
         "-vsync", "cfr", "-movflags", "+faststart", str(target),
     ])
     probe = json.loads(subprocess.check_output([
@@ -1135,7 +1246,7 @@ def encode_frame_selection(
     if (
         int(probe["width"]) != width
         or int(probe["height"]) != height
-        or probe["avg_frame_rate"] != f"{OUTPUT_FPS}/1"
+        or probe["avg_frame_rate"] != f"{output_fps}/1"
         or int(probe["nb_read_packets"]) != length
     ):
         raise RuntimeError(f"encoded video validation failed: {target}: {probe}")
@@ -1143,7 +1254,7 @@ def encode_frame_selection(
         "frames": length,
         "width": width,
         "height": height,
-        "fps": OUTPUT_FPS,
+        "fps": output_fps,
         "codec": probe["codec_name"],
         "pix_fmt": probe["pix_fmt"],
         "size_bytes": target.stat().st_size,
@@ -1207,24 +1318,24 @@ def write_csv_rows(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def build_features(width: int, height: int) -> dict[str, dict[str, Any]]:
+def build_features(width: int, height: int, action_horizon: int) -> dict[str, dict[str, Any]]:
     features: dict[str, dict[str, Any]] = {
         "observation.state": {
             "dtype": "float32", "shape": (STATE_DIM,), "names": [STATE_NAMES],
         },
         "action": {
-            "dtype": "float32", "shape": (ACTION_HORIZON, STATE_DIM),
+            "dtype": "float32", "shape": (action_horizon, STATE_DIM),
             "names": [
-                [f"future_step_{step}" for step in range(1, ACTION_HORIZON + 1)],
+                [f"future_step_{step}" for step in range(1, action_horizon + 1)],
                 ACTION_NAMES,
             ],
         },
         "action_is_pad": {
-            "dtype": "bool", "shape": (ACTION_HORIZON,),
-            "names": [f"future_step_{step}" for step in range(1, ACTION_HORIZON + 1)],
+            "dtype": "bool", "shape": (action_horizon,),
+            "names": [f"future_step_{step}" for step in range(1, action_horizon + 1)],
         },
-        "sample_valid_h50": {
-            "dtype": "int64", "shape": (1,), "names": ["all_50_targets_real"],
+        "sample_valid_action_horizon": {
+            "dtype": "int64", "shape": (1,), "names": ["all_action_targets_real"],
         },
         "source.e6_source_row_index": {
             "dtype": "int64", "shape": (1,), "names": ["source_row_index"],
@@ -1262,6 +1373,7 @@ def write_parquet(
     plan: EpisodePlan,
     episode_index: int,
     global_start: int,
+    output_fps: int,
 ) -> tuple[Path, dict[str, np.ndarray]]:
     import datasets
     from lerobot.common.datasets.utils import get_hf_features_from_features
@@ -1271,7 +1383,7 @@ def write_parquet(
         "observation.state": plan.state,
         "action": plan.action,
         "action_is_pad": plan.action_is_pad,
-        "sample_valid_h50": plan.sample_valid_h50.astype(np.int64)[:, None],
+        "sample_valid_action_horizon": plan.sample_valid_action_horizon.astype(np.int64)[:, None],
         "source.e6_source_row_index": plan.e6_source_row_indices[:, None],
         "source.e6_frame_id": plan.e6_frame_ids[:, None],
         "source.cam0_frame_index": plan.cam0_frame_indices[:, None],
@@ -1279,7 +1391,7 @@ def write_parquet(
         "source.cam0_signed_delta_ns": plan.cam0_signed_delta_ns[:, None],
         "source.cam1_signed_delta_ns": plan.cam1_signed_delta_ns[:, None],
         "source.hand_pose_timestamp_ns": plan.hand_pose_timestamps_ns[:, None],
-        "timestamp": np.arange(length, dtype=np.float32) / np.float32(OUTPUT_FPS),
+        "timestamp": np.arange(length, dtype=np.float32) / np.float32(output_fps),
         "frame_index": np.arange(length, dtype=np.int64),
         "episode_index": np.full(length, episode_index, dtype=np.int64),
         "index": np.arange(global_start, global_start + length, dtype=np.int64),
@@ -1296,128 +1408,132 @@ def write_parquet(
     return target, arrays
 
 
-def inspect(args: argparse.Namespace) -> int:
-    episodes = discover_episodes(args.source.resolve(), args.only, args.exclude)
-    print(f"selected_source_episodes={len(episodes)}")
-    if args.expected_episodes and len(episodes) != args.expected_episodes:
-        print(
-            f"WARNING: expected {args.expected_episodes} episodes but selected {len(episodes)}; "
-            "convert will refuse until --expected-episodes or selection is corrected"
-        )
-    source_plans: list[SourceEpisodePlan] = []
+def collect_plans(
+    args: argparse.Namespace,
+) -> tuple[list[Path], list[str], dict[str, Any], list[EpisodePlan], list[dict[str, Any]]]:
+    source = args.source.resolve()
+    selected_episode_ids: list[str] | None = None
+    selection_base: dict[str, Any] | None = None
+    if args.episode_list is not None:
+        selected_episode_ids, selection_base = read_episode_list(args.episode_list)
+    episodes, hidden_directories = discover_episodes(source, selected_episode_ids)
+    selection = episode_selection_record(source, episodes, selection_base)
+    snapshot = source_snapshot(source, episodes, hidden_directories, selection)
     plans: list[EpisodePlan] = []
+    failures: list[dict[str, Any]] = []
     for index, episode in enumerate(episodes):
-        source_plan = make_plan(
-            locate_episode_files(episode),
-            index,
-            max_alignment_ns=int(round(args.max_alignment_ms * 1_000_000)),
-            max_hand_age_ns=int(round(args.max_hand_age_ms * 1_000_000)),
-            hand_alignment=args.hand_alignment,
-        )
-        source_plans.append(source_plan)
-        plans.extend(source_plan.segments)
-        print(
-            f"[{index + 1}/{len(episodes)}] {episode.name}: "
-            f"E6={source_plan.segments[0].source_fps}Hz "
-            f"stride={source_plan.segments[0].source_stride} "
-            f"ratio={source_plan.segments[0].camera_ratio} "
-            f"offsets=cam0:{source_plan.segments[0].cam0_offset}/"
-            f"cam1:{source_plan.segments[0].cam1_offset} "
-            f"valid_runs={source_plan.quality['valid_sample_sequence_count']} "
-            f"segments={len(source_plan.segments)} "
-            f"singletons={source_plan.quality['discarded_singleton_sequence_count']} "
-            f"output={source_plan.quality['total_output_rows']}"
-        )
-    source_ids = [source_plan.files.episode.name for source_plan in source_plans]
-    output_segment_ids = [plan.output_segment_id for plan in plans]
+        try:
+            plan = make_plan(
+                locate_episode_files(episode),
+                index,
+                output_fps=args.fps,
+                action_horizon=args.action_horizon,
+                max_alignment_ns=int(round(args.max_alignment_ms * 1_000_000)),
+                max_hand_age_ns=int(round(args.max_hand_age_ms * 1_000_000)),
+                hand_alignment=args.hand_alignment,
+            )
+            plans.append(plan)
+        except Exception as error:
+            failures.append({
+                "source_episode_id": episode.name,
+                "source_episode_index": index,
+                "error_type": type(error).__name__,
+                "category": (
+                    "multiple_valid_runs" if "multiple_valid_runs" in str(error)
+                    else "quality_or_layout_failure"
+                ),
+                "error": str(error),
+            })
+    return episodes, hidden_directories, snapshot, plans, failures
+
+
+def inspect(args: argparse.Namespace) -> int:
+    episodes, hidden_directories, snapshot, plans, failures = collect_plans(args)
+    source_ids = [episode.name for episode in episodes]
+    output_episode_ids = [plan.output_episode_id for plan in plans]
     source_ids_sha256 = hashlib.sha256("\n".join(source_ids).encode("utf-8")).hexdigest()
-    output_segment_ids_sha256 = hashlib.sha256(
-        "\n".join(output_segment_ids).encode("utf-8")
+    output_episode_ids_sha256 = hashlib.sha256(
+        "\n".join(output_episode_ids).encode("utf-8")
     ).hexdigest()
     summary = {
         "mode": "inspect-only-no-writes",
+        "status": "failed" if failures else "ok",
         "source": str(args.source.resolve()),
         "target_not_created": str(args.target.resolve()),
-        "selected_episodes": len(source_plans),
-        "selected_source_episodes": len(source_plans),
+        "repo_id": args.repo_id,
+        "task": args.task,
+        "selected_source_episodes": len(episodes),
         "planned_output_episodes": len(plans),
+        "one_source_one_output_episode": not failures and len(episodes) == len(plans),
+        "hidden_directories_ignored": hidden_directories,
+        "episode_selection": snapshot.get("episode_selection"),
+        "source_snapshot_sha256": snapshot["sha256"],
         "selected_episode_ids_sha256": source_ids_sha256,
         "source_episode_ids_sha256": source_ids_sha256,
-        "output_segment_ids_sha256": output_segment_ids_sha256,
-        "expected_episodes": args.expected_episodes,
-        "output_fps": OUTPUT_FPS,
-        "action_horizon": ACTION_HORIZON,
+        "output_episode_ids_sha256": output_episode_ids_sha256,
+        "output_fps": args.fps,
+        "action_horizon": args.action_horizon,
         "max_alignment_ms": args.max_alignment_ms,
         "max_hand_age_ms": args.max_hand_age_ms,
         "hand_alignment": args.hand_alignment,
         "state_shape": [STATE_DIM],
-        "action_shape": [ACTION_HORIZON, STATE_DIM],
+        "action_shape": [args.action_horizon, STATE_DIM],
         "total_output_rows_planned": sum(plan.output_count for plan in plans),
-        "total_full_real_h50_rows_planned": int(
-            sum(plan.sample_valid_h50.sum() for plan in plans)
+        "total_full_real_action_horizon_rows_planned": int(
+            sum(plan.sample_valid_action_horizon.sum() for plan in plans)
         ),
         "total_padded_action_slots_planned": int(
             sum(plan.action_is_pad.sum() for plan in plans)
         ),
-        "min_output_rows_per_output_episode": min(plan.output_count for plan in plans),
-        "max_output_rows_per_output_episode": max(plan.output_count for plan in plans),
-        "source_episodes_with_multiple_output_segments": [
-            source_plan.files.episode.name
-            for source_plan in source_plans
-            if len(source_plan.segments) > 1
-        ],
+        "min_output_rows_per_output_episode": min((plan.output_count for plan in plans), default=0),
+        "max_output_rows_per_output_episode": max((plan.output_count for plan in plans), default=0),
         "total_discarded_singleton_sequences": int(sum(
-            source_plan.quality["discarded_singleton_sequence_count"]
-            for source_plan in source_plans
+            plan.quality["discarded_singleton_sequence_count"] for plan in plans
         )),
         "discarded_singleton_sequences": [
             {
-                "source_episode_id": source_plan.files.episode.name,
+                "source_episode_id": plan.files.episode.name,
                 **record,
             }
-            for source_plan in source_plans
-            for record in source_plan.quality["discarded_singleton_sequences"]
+            for plan in plans
+            for record in plan.quality["discarded_singleton_sequences"]
         ],
-        "min_strict_10hz_retention_ratio": min(
-            source_plan.quality["strict_10hz_retention_ratio"]
-            for source_plan in source_plans
+        "min_strict_output_grid_retention_ratio": min(
+            (plan.quality["strict_output_grid_retention_ratio"] for plan in plans), default=0.0
         ),
         "max_abs_cam0_alignment_ms": max(
-            source_plan.quality["strict_cam0_max_abs_delta_ns"]
-            for source_plan in source_plans
+            (plan.quality["strict_cam0_max_abs_delta_ns"] for plan in plans), default=0
         ) / 1_000_000,
         "max_abs_cam1_alignment_ms": max(
-            source_plan.quality["strict_cam1_max_abs_delta_ns"]
-            for source_plan in source_plans
+            (plan.quality["strict_cam1_max_abs_delta_ns"] for plan in plans), default=0
         ) / 1_000_000,
         "max_abs_left_hand_alignment_ms": max(
-            source_plan.quality["absolute_hand_quality"]["left_max_fresh_abs_delta_ns"]
-            for source_plan in source_plans
+            (plan.quality["absolute_hand_quality"]["left_max_fresh_abs_delta_ns"] for plan in plans),
+            default=0,
         ) / 1_000_000,
         "max_abs_right_hand_alignment_ms": max(
-            source_plan.quality["absolute_hand_quality"]["right_max_fresh_abs_delta_ns"]
-            for source_plan in source_plans
+            (plan.quality["absolute_hand_quality"]["right_max_fresh_abs_delta_ns"] for plan in plans),
+            default=0,
         ) / 1_000_000,
-        "output_segments_with_zero_full_real_h50_rows": [
-            plan.output_segment_id
+        "output_episodes_with_zero_full_real_action_horizon_rows": [
+            plan.output_episode_id
             for plan in plans
-            if not bool(plan.sample_valid_h50.any())
+            if not bool(plan.sample_valid_action_horizon.any())
         ],
+        "failure_count": len(failures),
+        "failures": failures,
+        "multi_run_failures": [failure for failure in failures if failure["category"] == "multiple_valid_runs"],
     }
     if not args.compact:
-        summary["source_episodes"] = [
-            source_plan.quality for source_plan in source_plans
-        ]
-        summary["output_segments"] = [plan.quality for plan in plans]
+        summary["source_snapshot"] = snapshot
+        summary["output_episodes"] = [plan.quality for plan in plans]
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0
+    return 1 if failures else 0
 
 
 def convert(args: argparse.Namespace) -> int:
     if args.confirm != "CREATE_LEROBOT_DATASET":
         raise ValueError("conversion requires --confirm CREATE_LEROBOT_DATASET")
-    if args.expected_episodes <= 0:
-        raise ValueError("conversion requires --expected-episodes N to lock the source snapshot")
     source = args.source.resolve()
     target = args.target.resolve()
     if (
@@ -1426,11 +1542,16 @@ def convert(args: argparse.Namespace) -> int:
         or source.is_relative_to(target)
     ):
         raise ValueError(f"source and target directories must not overlap: {source} / {target}")
-    episodes = discover_episodes(source, args.only, args.exclude)
-    if args.expected_episodes and len(episodes) != args.expected_episodes:
+    episodes, hidden_directories, initial_snapshot, plans, failures = collect_plans(args)
+    if failures:
         raise ValueError(
-            f"expected {args.expected_episodes} selected episodes, found {len(episodes)}"
+            "preflight failed; no video encoding started and target was not created:\n"
+            + json.dumps({"failure_count": len(failures), "failures": failures}, ensure_ascii=False, indent=2)
         )
+    if len(plans) != len(episodes):
+        raise AssertionError("one-source-one-output invariant changed during preflight")
+    if [plan.output_episode_id for plan in plans] != [episode.name for episode in episodes]:
+        raise AssertionError("output episode IDs no longer equal source directory IDs")
     if target.exists():
         if (
             args.replace_empty_target
@@ -1449,21 +1570,6 @@ def convert(args: argparse.Namespace) -> int:
     if not target.parent.is_dir():
         raise FileNotFoundError(f"target parent does not exist: {target.parent}")
 
-    source_plans = [
-        make_plan(
-            locate_episode_files(episode),
-            index,
-            max_alignment_ns=int(round(args.max_alignment_ms * 1_000_000)),
-            max_hand_age_ns=int(round(args.max_hand_age_ms * 1_000_000)),
-            hand_alignment=args.hand_alignment,
-        )
-        for index, episode in enumerate(episodes)
-    ]
-    plans = [
-        segment
-        for source_plan in source_plans
-        for segment in source_plan.segments
-    ]
     from lerobot.common.datasets.lerobot_dataset import LeRobotDatasetMetadata
     from lerobot.common.datasets.utils import write_info, write_stats
 
@@ -1472,10 +1578,10 @@ def convert(args: argparse.Namespace) -> int:
     try:
         metadata = LeRobotDatasetMetadata.create(
             repo_id=args.repo_id,
-            fps=OUTPUT_FPS,
+            fps=args.fps,
             root=staging,
-            robot_type="umi_task_v1_dual_hand_se3_rot6d_hand30_h50",
-            features=build_features(args.video_width, args.video_height),
+            robot_type=f"umi_dual_hand_se3_rot6d_hand30_h{args.action_horizon}",
+            features=build_features(args.video_width, args.video_height, args.action_horizon),
             use_videos=True,
         )
         metadata.add_task(args.task)
@@ -1505,6 +1611,7 @@ def convert(args: argparse.Namespace) -> int:
                         encode_frame_selection,
                         source_video, video_target, frame_indices,
                         args.video_width, args.video_height, args.resize_mode, args.crf,
+                        args.fps,
                         source_crop, input_format,
                     )
                     jobs[future] = (episode_index, key)
@@ -1518,7 +1625,7 @@ def convert(args: argparse.Namespace) -> int:
         global_start = 0
         for episode_index, plan in enumerate(plans):
             parquet, arrays = write_parquet(
-                metadata, staging, plan, episode_index, global_start
+                metadata, staging, plan, episode_index, global_start, args.fps
             )
             episode_stats = {
                 key: numeric_stats(value)
@@ -1527,7 +1634,7 @@ def convert(args: argparse.Namespace) -> int:
             }
             real_action_slots = plan.action[~plan.action_is_pad]
             # A two-sample run legitimately emits one observation whose whole
-            # H50 action is terminal padding.  Keep that episode and its mask,
+            # action horizon is terminal padding.  Keep that episode and its mask,
             # but omit its zero-count action stats so it cannot introduce NaN
             # or fake values into LeRobot's aggregate action statistics.
             if len(real_action_slots):
@@ -1556,18 +1663,14 @@ def convert(args: argparse.Namespace) -> int:
                 audit_dir / "alignment_nearest_recomputed.csv",
                 plan.recomputed_nearest_rows,
             )
-            write_csv_rows(audit_dir / "alignment_10hz_strict_grid.csv", plan.strict_rows)
+            write_csv_rows(audit_dir / "alignment_output_grid.csv", plan.strict_rows)
             atomic_json(audit_dir / "quality_summary.json", plan.quality)
             manifest = {
                 **plan.quality,
                 "episode_index": episode_index,
                 "source_episode_id": plan.files.episode.name,
                 "source_episode_index": plan.source_episode_index,
-                "segment_index": plan.segment_index,
-                "segment_count": plan.segment_count,
-                "valid_run_index": plan.valid_run_index,
-                "valid_run_count": plan.valid_run_count,
-                "output_segment_id": plan.output_segment_id,
+                "output_episode_id": plan.output_episode_id,
                 "source_episode": str(plan.files.episode),
                 "source_hashes": {
                     "camera/hand_pose.csv": sha256(plan.files.relative_hand_pose_csv),
@@ -1596,43 +1699,62 @@ def convert(args: argparse.Namespace) -> int:
             manifests.append(manifest)
             global_start += plan.output_count
             print(
-                f"[{episode_index + 1}/{len(plans)}] {plan.output_segment_id}: "
+                f"[{episode_index + 1}/{len(plans)}] {plan.output_episode_id}: "
                 f"{plan.output_count} rows",
                 flush=True,
             )
 
         write_stats(metadata.stats, staging)
-        metadata.info["splits"] = (
-            {"train": "0:80", "validation": "80:90", "test": "90:100"}
-            if len(plans) == 100
-            else {"train": f"0:{len(plans)}"}
-        )
+        metadata.info["splits"] = {"train": f"0:{len(plans)}"}
         write_info(metadata.info, staging)
+        final_selected_episode_ids: list[str] | None = None
+        final_selection_base: dict[str, Any] | None = None
+        if args.episode_list is not None:
+            final_selected_episode_ids, final_selection_base = read_episode_list(
+                args.episode_list
+            )
+        final_episodes, final_hidden_directories = discover_episodes(
+            source, final_selected_episode_ids
+        )
+        final_selection = episode_selection_record(
+            source, final_episodes, final_selection_base
+        )
+        final_snapshot = source_snapshot(
+            source, final_episodes, final_hidden_directories, final_selection
+        )
+        if final_snapshot != initial_snapshot:
+            raise RuntimeError(
+                "source snapshot changed during conversion; refusing atomic publication: "
+                f"start={initial_snapshot['sha256']} end={final_snapshot['sha256']}"
+            )
         contract = {
-            "schema": "umi-task-v1-dual-hand-pose-lerobot30-h50",
-            "schema_version": 4,
+            "schema": "umi-folder-dual-hand-pose-lerobot",
+            "schema_version": 1,
             "status": "complete",
             "source": str(source),
             "source_episode_ids_sha256": hashlib.sha256(
-                "\n".join(
-                    source_plan.files.episode.name for source_plan in source_plans
-                ).encode("utf-8")
+                "\n".join(episode.name for episode in episodes).encode("utf-8")
             ).hexdigest(),
-            "output_segment_ids_sha256": hashlib.sha256(
-                "\n".join(plan.output_segment_id for plan in plans).encode("utf-8")
+            "output_episode_ids_sha256": hashlib.sha256(
+                "\n".join(plan.output_episode_id for plan in plans).encode("utf-8")
             ).hexdigest(),
+            "one_source_one_output_episode": True,
+            "hidden_directories_ignored": hidden_directories,
+            "episode_selection": initial_snapshot.get("episode_selection"),
+            "source_snapshot": initial_snapshot,
+            "source_snapshot_verified_before_publish": True,
             "target": str(target),
             "repo_id": args.repo_id,
             "task": args.task,
-            "fps": OUTPUT_FPS,
+            "fps": args.fps,
             "state_dim": STATE_DIM,
             "state_shape": [STATE_DIM],
             "action_dim": STATE_DIM,
-            "action_shape": [ACTION_HORIZON, STATE_DIM],
+            "action_shape": [args.action_horizon, STATE_DIM],
             "state_names": STATE_NAMES,
             "action_names": ACTION_NAMES,
-            "state_semantics": "10Hz [left inv(T[t-1])T[t] pose9, right pose9, left/right absolute finger12]",
-            "action_semantics": "action[t,k]=[left inv(T[t])T[t+k] pose9, right pose9, absolute finger targets12], k=1..50; one shared anchor",
+            "state_semantics": f"{args.fps}Hz [left inv(T[t-1])T[t] pose9, right pose9, left/right absolute finger12]",
+            "action_semantics": f"action[t,k]=[left inv(T[t])T[t+k] pose9, right pose9, absolute finger targets12], k=1..{args.action_horizon}; one shared anchor",
             "pose_encoding": "body-frame translation xyz in metres + rotation6d [R[:,0],R[:,1]]; fingers in degrees",
             "tail_policy": "preserve every real observation/video row; repeat terminal action target only in slots marked action_is_pad=true",
             "camera_alignment": {
@@ -1647,8 +1769,8 @@ def convert(args: argparse.Namespace) -> int:
                 "hand_state_policy": args.hand_alignment,
                 "hand_state_offline_noncausal": args.hand_alignment == "nearest",
                 "camera_policy": (
-                    "E6 10Hz grid, nearest timestamp, strict monotonic one-to-one; "
-                    "every valid run with >=2 samples becomes a separate output episode"
+                    f"E6 {args.fps}Hz grid, nearest timestamp, strict monotonic one-to-one; "
+                    "exactly one run with >=2 samples is allowed per source directory"
                 ),
                 "source_associations_are_audit_only": [
                     "extensions/customer_camera/derived/cam0_associations.csv",
@@ -1674,82 +1796,85 @@ def convert(args: argparse.Namespace) -> int:
             },
             "training_contract": {
                 "action_is_prechunked": True,
-                "action_horizon": ACTION_HORIZON,
+                "action_horizon": args.action_horizon,
                 "ordinary_future_row_slicing_allowed": False,
                 "apply_delta_transform_again": False,
                 "action_padding_mask_key": "action_is_pad",
                 "openpi_action_padding_mask_key": "action_is_pad",
                 "full_real_horizon_filter_key": None,
-                "full_real_horizon_audit_key": "sample_valid_h50",
+                "full_real_horizon_audit_key": "sample_valid_action_horizon",
                 "current_openpi_sample_filter_key": None,
                 "loss_reduction": "sum(loss[~action_is_pad]) / count(~action_is_pad)",
                 "padding_contract": (
                     "the complete dataset retains terminal rows and action_is_pad; "
-                    "the 5090 task_v1 OpenPI loader propagates action_is_pad as a "
+                    "the matching OpenPI loader must propagate action_is_pad as a "
                     "per-slot loss mask, so terminal anchors must not be filtered; "
-                    "sample_valid_h50 is audit-only/optional compatibility metadata"
+                    "sample_valid_action_horizon is audit-only/optional compatibility metadata"
                 ),
                 "action_normalization_stats": "meta/stats.json action stats are 30-D and use only unpadded action slots",
+                "required_dataset_fps": args.fps,
+                "required_action_horizon": args.action_horizon,
             },
-            "total_source_episodes": len(source_plans),
+            "total_source_episodes": len(episodes),
             "total_episodes": len(plans),
             "total_output_episodes": len(plans),
-            "source_episodes_with_multiple_output_segments": [
-                source_plan.files.episode.name
-                for source_plan in source_plans
-                if len(source_plan.segments) > 1
-            ],
             "total_discarded_singleton_sequences": int(sum(
-                source_plan.quality["discarded_singleton_sequence_count"]
-                for source_plan in source_plans
+                plan.quality["discarded_singleton_sequence_count"] for plan in plans
             )),
             "discarded_singleton_sequences": [
                 {
-                    "source_episode_id": source_plan.files.episode.name,
+                    "source_episode_id": plan.files.episode.name,
                     **record,
                 }
-                for source_plan in source_plans
-                for record in source_plan.quality["discarded_singleton_sequences"]
+                for plan in plans
+                for record in plan.quality["discarded_singleton_sequences"]
             ],
             "total_frames": global_start,
-            "total_full_real_h50_frames": int(
-                sum(plan.sample_valid_h50.sum() for plan in plans)
+            "total_full_real_action_horizon_frames": int(
+                sum(plan.sample_valid_action_horizon.sum() for plan in plans)
             ),
-            "total_partial_h50_frames": int(
-                sum((~plan.sample_valid_h50).sum() for plan in plans)
+            "total_partial_action_horizon_frames": int(
+                sum((~plan.sample_valid_action_horizon).sum() for plan in plans)
             ),
             "total_padded_action_slots": int(
                 sum(plan.action_is_pad.sum() for plan in plans)
             ),
             "total_real_action_slots": int(
-                global_start * ACTION_HORIZON
+                global_start * args.action_horizon
                 - sum(plan.action_is_pad.sum() for plan in plans)
             ),
-            "episodes_with_zero_full_real_h50_frames": [
-                plan.output_segment_id
+            "episodes_with_zero_full_real_action_horizon_frames": [
+                plan.output_episode_id
                 for plan in plans
-                if not bool(plan.sample_valid_h50.any())
+                if not bool(plan.sample_valid_action_horizon.any())
             ],
-            "source_episodes": [
-                source_plan.quality for source_plan in source_plans
-            ],
+            "source_episodes": [plan.quality for plan in plans],
             "episodes": manifests,
         }
+        if args.episode_list is not None:
+            selection_copy = staging / "meta" / "episode_selection.txt"
+            selection_copy.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(args.episode_list.expanduser().resolve(strict=True), selection_copy)
+            expected_selection_hash = initial_snapshot["episode_selection"][
+                "episode_list_sha256"
+            ]
+            if sha256(selection_copy) != expected_selection_hash:
+                raise RuntimeError("copied episode allowlist hash changed before publication")
         atomic_json(staging / "meta" / "umi_conversion.json", contract)
         shutil.copy2(Path(__file__).resolve(), staging / "meta" / Path(__file__).name)
         (staging / "README.md").write_text(
-            "# UMI dual hand-pose + absolute fingers, 10 Hz / H50\n\n"
+            f"# UMI dual hand-pose + absolute fingers, {args.fps} Hz / H{args.action_horizon}\n\n"
             "State is 30-D: adjacent body-frame left/right hand-pose deltas "
             "from `camera/hand_pose.csv`, followed by absolute finger12. Each row "
-            "already contains one H=50 action chunk whose two EEF targets all "
+            f"already contains one H={args.action_horizon} action chunk whose two EEF targets all "
             "share the current row anchor; future fingers remain absolute. Do "
             "not slice future action rows or apply another delta transform. "
-            "Every valid aligned run with at least two samples is an independent "
-            "LeRobot episode, so actions never cross an invalid boundary. "
+            "Each source directory maps to exactly one LeRobot episode; a second "
+            "substantial aligned run rejects conversion rather than splitting data. "
             "Terminal action slots are explicit in `action_is_pad`; training "
-            "must mask them per slot. The 5090 task_v1 OpenPI stack propagates this "
+            "must mask them per slot. The matching OpenPI stack must propagate this "
             "mask into the loss, so do not filter terminal rows with "
-            "`sample_valid_h50`; that field is audit-only/optional compatibility "
+            "`sample_valid_action_horizon`; that field is audit-only/optional compatibility "
             "metadata. Videos are never padded. "
             "The 30-D action statistics in `meta/stats.json` exclude every padded slot. "
             "See `meta/umi_conversion.json`.\n",
@@ -1771,24 +1896,48 @@ def convert(args: argparse.Namespace) -> int:
 
 def self_test() -> int:
     rng = np.random.default_rng(7)
-    count = ACTION_HORIZON + 8
-    position = np.cumsum(rng.normal(scale=0.01, size=(count, 3)), axis=0)
-    angle = np.linspace(0.0, 0.8, count)
-    transforms = np.broadcast_to(np.eye(4), (count, 4, 4)).copy()
-    transforms[:, :3, 3] = position
-    transforms[:, 0, 0] = np.cos(angle)
-    transforms[:, 0, 1] = -np.sin(angle)
-    transforms[:, 1, 0] = np.sin(angle)
-    transforms[:, 1, 1] = np.cos(angle)
-    state = encode_relative(invert(transforms[:-1]) @ transforms[1:])
-    anchor = 2
-    targets = np.arange(anchor + 1, anchor + ACTION_HORIZON + 1)
-    action = encode_relative(invert(transforms[anchor])[None] @ transforms[targets])
-    if not np.allclose(action[0], state[anchor]):
-        raise AssertionError("k=1 invariant failed")
-    composed = transforms[anchor] @ (invert(transforms[anchor])[None] @ transforms[targets])
-    if not np.allclose(composed, transforms[targets]):
-        raise AssertionError("shared-anchor reconstruction failed")
+    for output_fps, action_horizon in ((10, 50), (30, 90)):
+        source_fps = 60
+        if source_fps % output_fps or source_fps // output_fps not in (2, 6):
+            raise AssertionError("10/30 Hz integer-stride contract failed")
+        features = build_features(640, 480, action_horizon)
+        if (
+            features["action"]["shape"] != (action_horizon, STATE_DIM)
+            or features["action_is_pad"]["shape"] != (action_horizon,)
+            or len(features["action_is_pad"]["names"]) != action_horizon
+        ):
+            raise AssertionError("dynamic action feature shape failed")
+        count = action_horizon + 8
+        position = np.cumsum(rng.normal(scale=0.01, size=(count, 3)), axis=0)
+        angle = np.linspace(0.0, 0.8, count)
+        transforms = np.broadcast_to(np.eye(4), (count, 4, 4)).copy()
+        transforms[:, :3, 3] = position
+        transforms[:, 0, 0] = np.cos(angle)
+        transforms[:, 0, 1] = -np.sin(angle)
+        transforms[:, 1, 0] = np.sin(angle)
+        transforms[:, 1, 1] = np.cos(angle)
+        state = encode_relative(invert(transforms[:-1]) @ transforms[1:])
+        anchor = 2
+        targets = np.arange(anchor + 1, anchor + action_horizon + 1)
+        action = encode_relative(invert(transforms[anchor])[None] @ transforms[targets])
+        if not np.allclose(action[0], state[anchor]):
+            raise AssertionError(f"{output_fps}Hz/H{action_horizon} k=1 invariant failed")
+        composed = transforms[anchor] @ (invert(transforms[anchor])[None] @ transforms[targets])
+        if not np.allclose(composed, transforms[targets]):
+            raise AssertionError("shared-anchor reconstruction failed")
+        anchors, future, pad = build_future_indices(4, action_horizon)
+        if (
+            anchors.shape != (3,)
+            or future.shape != (3, action_horizon)
+            or pad.shape != (3, action_horizon)
+            or not pad[-1].all()
+            or pad[0, 0]
+            or not pad[0, 2:].all()
+            or int(future.max()) != 3
+        ):
+            raise AssertionError(f"H{action_horizon} terminal padding failed")
+    if 60 % 7 == 0:
+        raise AssertionError("non-divisor FPS rejection fixture is invalid")
     query = np.asarray([9, 21, 39], dtype=np.int64)
     source = np.asarray([0, 10, 20, 30, 40], dtype=np.int64)
     if not np.array_equal(nearest_indices(source, query), np.asarray([1, 2, 4])):
@@ -1798,33 +1947,110 @@ def self_test() -> int:
         np.asarray([True, True, True, False, True, True]),
     )
     if sequences != [(0, 2), (3, 6)]:
-        raise AssertionError("10 Hz validity segmentation failed")
+        raise AssertionError("output-grid validity segmentation failed")
     split_sequences = valid_sample_sequences(
         np.asarray([True, False, True, True, False, True, True, True, False, True]),
         np.ones(10, dtype=bool),
     )
-    emitted_sequences = [
-        (start, end) for start, end in split_sequences if end - start >= 2
-    ]
-    discarded_singletons = [
-        (start, end) for start, end in split_sequences if end - start == 1
-    ]
-    if emitted_sequences != [(2, 4), (5, 8)] or discarded_singletons != [(0, 1), (9, 10)]:
-        raise AssertionError("multi-run emission/singleton audit failed")
-    synthetic_segment_length = 4
-    synthetic_anchors = np.arange(1, synthetic_segment_length, dtype=np.int64)
-    synthetic_requested = synthetic_anchors[:, None] + np.arange(
-        1, ACTION_HORIZON + 1, dtype=np.int64
-    )[None, :]
-    synthetic_pad = synthetic_requested >= synthetic_segment_length
-    synthetic_targets = np.minimum(synthetic_requested, synthetic_segment_length - 1)
-    if (
-        not synthetic_pad[-1].all()
-        or synthetic_pad[0, 0]
-        or not synthetic_pad[0, 2:].all()
-        or int(synthetic_targets.max()) != synthetic_segment_length - 1
-    ):
-        raise AssertionError("per-segment terminal H50 padding failed")
+    try:
+        require_single_emittable_run(split_sequences, "synthetic")
+    except ValueError as error:
+        if "multiple_valid_runs" not in str(error):
+            raise
+    else:
+        raise AssertionError("multiple substantial runs were not rejected")
+    singleton_audit_runs = [(0, 1), (2, 6), (7, 8)]
+    if require_single_emittable_run(singleton_audit_runs, "synthetic") != (1, 2, 6):
+        raise AssertionError("prefix/suffix singleton audit contract failed")
+
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        first = root / "20260829_000000_1_1"
+        second = root / "20260829_000001_2_2"
+        second.mkdir()
+        first.mkdir()
+        (root / ".audit").mkdir()
+        discovered, hidden = discover_episodes(root)
+        if [path.name for path in discovered] != [first.name, second.name] or hidden != [".audit"]:
+            raise AssertionError("full stable episode discovery failed")
+        episode_list = root / ".audit" / "pass_episodes.txt"
+        episode_list.write_text(second.name + "\n", encoding="utf-8")
+        selected_ids, selection_base = read_episode_list(episode_list)
+        selected, selected_hidden = discover_episodes(root, selected_ids)
+        selection = episode_selection_record(root, selected, selection_base)
+        snapshot = source_snapshot(root, selected, selected_hidden, selection)
+        if not (
+            [path.name for path in selected] == [second.name]
+            and selection is not None
+            and selection["selected_episode_ids"] == [second.name]
+            and selection["unselected_episode_ids"] == [first.name]
+            and snapshot["episode_selection"]["episode_list_sha256"]
+            == hashlib.sha256((second.name + "\n").encode("utf-8")).hexdigest()
+        ):
+            raise AssertionError("explicit episode allowlist audit failed")
+        episode_list.write_text(second.name + "\n" + second.name + "\n", encoding="utf-8")
+        try:
+            read_episode_list(episode_list)
+        except ValueError as error:
+            if "duplicate" not in str(error):
+                raise
+        else:
+            raise AssertionError("duplicate episode allowlist entry was accepted")
+        episode_list.write_text(second.name + "\n", encoding="utf-8")
+        try:
+            discover_episodes(root, ["20260829_999999_9_9"])
+        except FileNotFoundError as error:
+            if "missing" not in str(error):
+                raise
+        else:
+            raise AssertionError("missing allowlisted episode was accepted")
+        abnormal = root / "visible_misc"
+        abnormal.mkdir()
+        try:
+            discover_episodes(root)
+        except ValueError as error:
+            if "visible source entries" not in str(error):
+                raise
+        else:
+            raise AssertionError("visible abnormal source directory was silently ignored")
+        abnormal.rmdir()
+        visible_file = root / "README.txt"
+        visible_file.write_text("not an episode", encoding="utf-8")
+        try:
+            discover_episodes(root)
+        except ValueError as error:
+            if "not_a_directory" not in str(error):
+                raise
+        else:
+            raise AssertionError("visible non-directory source entry was silently ignored")
+
+    with tempfile.TemporaryDirectory() as temporary:
+        packet_csv = Path(temporary) / "right_rx_packets.csv"
+        base_values = list(range(25))
+        conflict_values = base_values.copy()
+        conflict_values[0] = 999
+        write_csv_rows(packet_csv, [
+            {
+                "packet_type_name": "HAND_STATE_FRAME",
+                "payload_status": "full",
+                "decoded_values": ";".join(map(str, base_values)),
+                "host_rx_time_ns": "123",
+            },
+            {
+                "packet_type_name": "HAND_STATE_FRAME",
+                "payload_status": "full",
+                "decoded_values": ";".join(map(str, conflict_values)),
+                "host_rx_time_ns": "123",
+            },
+        ])
+        try:
+            decode_absolute_hand_packets(packet_csv, "right")
+        except ValueError as error:
+            message = str(error)
+            if "timestamp 123" not in message or "row_indices=(0,1)" not in message or "first6=" not in message:
+                raise AssertionError(f"duplicate packet conflict audit is incomplete: {message}")
+        else:
+            raise AssertionError("conflicting duplicate packet timestamp was silently accepted")
     relative_rows: list[dict[str, str]] = []
     for index in range(3):
         row = {
@@ -1869,17 +2095,32 @@ def self_test() -> int:
         raise AssertionError("causal absolute-hand sampling failed")
     if sampled.shape != (2, 6):
         raise AssertionError("absolute-hand sample shape failed")
-    print("self-test passed: hand_pose reconstruction, absolute hands, SE(3), H50, alignment")
+    source_ids = ["episode_a", "episode_b"]
+    output_ids = list(source_ids)
+    if len(source_ids) != len(output_ids) or source_ids != output_ids:
+        raise AssertionError("one-source-one-output identity invariant failed")
+    print(
+        "self-test passed: 10Hz/H50, 30Hz/H90, one-to-one discovery, "
+        "multi-run rejection, duplicate packet conflict, hand pose, SE(3), padding"
+    )
     return 0
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
-    parser.add_argument("--target", type=Path, default=DEFAULT_TARGET)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--target", type=Path, required=True)
     parser.add_argument(
-        "--expected-episodes", type=int, default=0,
-        help="require exactly N selected episodes; 0 disables the count check",
+        "--episode-list",
+        type=Path,
+        help=(
+            "optional UTF-8 newline-delimited allowlist of episode directory basenames; "
+            "the order, SHA-256, selected IDs, and unselected valid IDs are audited"
+        ),
     )
+    parser.add_argument("--repo-id", required=True)
+    parser.add_argument("--task", required=True)
+    parser.add_argument("--fps", type=int, required=True)
+    parser.add_argument("--action-horizon", type=int, required=True)
     parser.add_argument(
         "--max-alignment-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_MS,
         help="maximum absolute camera-to-E6 timestamp error (default: 100 ms)",
@@ -1892,12 +2133,10 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
         "--hand-alignment", choices=("nearest", "causal"), default="nearest",
         help=(
             "align Revo2 hand states by nearest timestamp (default) or causal ZOH; "
-            "nearest is recommended for task_v1 because periodic roughly "
+            "nearest is recommended when periodic roughly "
             "116-118 ms packet gaps can fragment causal ZOH under a 100 ms bound"
         ),
     )
-    parser.add_argument("--only", action="append", default=[], metavar="EPISODE_ID")
-    parser.add_argument("--exclude", action="append", default=[], metavar="EPISODE_ID")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1916,8 +2155,6 @@ def parse_args() -> argparse.Namespace:
         "convert", help="perform the staged, atomic LeRobot conversion"
     )
     add_common_arguments(convert_parser)
-    convert_parser.add_argument("--repo-id", default=DEFAULT_REPO_ID)
-    convert_parser.add_argument("--task", required=True)
     convert_parser.add_argument("--video-width", type=int, default=640)
     convert_parser.add_argument("--video-height", type=int, default=480)
     convert_parser.add_argument(
@@ -1938,24 +2175,32 @@ def parse_args() -> argparse.Namespace:
     test_parser = subparsers.add_parser("self-test", help="run math-only unit checks")
     test_parser.set_defaults(handler=lambda _args: self_test())
     args = parser.parse_args()
-    if hasattr(args, "expected_episodes") and args.expected_episodes < 0:
-        parser.error("--expected-episodes must be >= 0 (0 disables the check)")
+    if hasattr(args, "fps") and not 1 <= args.fps <= 240:
+        parser.error("--fps must be an integer in [1,240]")
+    if hasattr(args, "action_horizon") and not 1 <= args.action_horizon <= 1024:
+        parser.error("--action-horizon must be an integer in [1,1024]")
+    if hasattr(args, "repo_id") and (not args.repo_id.strip() or "/" not in args.repo_id):
+        parser.error("--repo-id must be a non-empty owner/name identifier")
+    if hasattr(args, "task") and not args.task.strip():
+        parser.error("--task must not be empty")
     if hasattr(args, "max_alignment_ms") and (
         not math.isfinite(args.max_alignment_ms) or args.max_alignment_ms <= 0
     ):
         parser.error("--max-alignment-ms must be finite and positive")
     if hasattr(args, "max_alignment_ms") and args.max_alignment_ms > 100.0:
-        parser.error("--max-alignment-ms must be <= 100 to satisfy the task_v1 contract")
+        parser.error("--max-alignment-ms must be <= 100 to satisfy the alignment contract")
     if hasattr(args, "max_hand_age_ms") and (
         not math.isfinite(args.max_hand_age_ms) or args.max_hand_age_ms <= 0
     ):
         parser.error("--max-hand-age-ms must be finite and positive")
     if hasattr(args, "max_hand_age_ms") and args.max_hand_age_ms > 100.0:
-        parser.error("--max-hand-age-ms must be <= 100 to satisfy the task_v1 contract")
+        parser.error("--max-hand-age-ms must be <= 100 to satisfy the hand-state contract")
     if hasattr(args, "video_width") and (args.video_width <= 0 or args.video_height <= 0):
         parser.error("video dimensions must be positive")
     if hasattr(args, "crf") and not 0 <= args.crf <= 51:
         parser.error("--crf must be in [0,51]")
+    if hasattr(args, "video_workers") and not 1 <= args.video_workers <= 32:
+        parser.error("--video-workers must be in [1,32]")
     return args
 
 

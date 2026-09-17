@@ -1,0 +1,16 @@
+{
+  "status": "validated",
+  "config_diff": {
+    "name": {
+      "old": "pi05_umi_task_electric_10hz_h50_wrist180_state_20k_b64_w32_8gpu_v1",
+      "new": "pi05_umi_task_electric_10hz_h50_wrist180_state_20k_b64_w128_8gpu_v1"
+    },
+    "num_workers": {
+      "old": 32,
+      "new": 128
+    }
+  },
+  "cpu_affinity_count": 152,
+  "source_checkpoint_available": false,
+  "restart_from_step": 0
+}

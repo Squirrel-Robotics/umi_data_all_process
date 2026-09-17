@@ -1,0 +1,55 @@
+{
+  "status": "passed",
+  "differences": {
+    "name": {
+      "old": "'pi05_umi_task_electric_10hz_h50_wrist180_state_20k_b64_w128_8gpu_v1'",
+      "new": "'pi05_umi_task_electric_10hz_h50_wrist180_state_fixed1000_20k_b64_w128_8gpu_v1'"
+    },
+    "data.assets.asset_id": {
+      "old": "'umi_task_electric_10hz_h50_right_eye_wrist180_masked_v1'",
+      "new": "'umi_task_electric_10hz_h50_right_eye_wrist180_fixed1000_v1'"
+    },
+    "policy_metadata.hand_normalization": {
+      "old": null,
+      "new": {
+        "kind": "fixed_linear_bounds",
+        "raw_count_bounds": [
+          0,
+          1000
+        ],
+        "raw_units": "0.1 degree/count",
+        "dataset_degree_bounds": [
+          0,
+          100
+        ],
+        "dimensions": [
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29
+        ],
+        "applies_to": [
+          "state",
+          "actions"
+        ],
+        "eef_normalization": "unchanged_empirical_quantiles",
+        "inference_hand_units": "absolute_degrees"
+      }
+    }
+  },
+  "resume": false,
+  "restart_from_step": 0,
+  "base_params": "/mnt/data/checkpoints/pi05_base/params",
+  "num_workers": 128,
+  "batch_size": 64,
+  "old_norm_stats_preserved": true,
+  "old_checkpoint_preserved": true
+}

@@ -1,0 +1,171 @@
+{
+  "schema_version": "umi.task_v2_x2.read_only_preflight.v1",
+  "audit_date": "2026-09-09",
+  "server": "server-dzq",
+  "source_root": "/mnt/data/dzq/umi_v2/data/task_v2_x2",
+  "source_modified": false,
+  "conversion_executed": false,
+  "training_started_by_this_audit": false,
+  "selection": {
+    "source_file": "/Users/duanzhaoqi/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_a7iylgy4ybso22_ebb2/temp/RWTemp/2026-09/a341e26fad2091fcab71e2868a5e162b/track_pass_episodes.txt",
+    "sha256": "b6a05245e6b0eaf68746fa43851db2f2b097a20f87e0131444f692082a4ebffd",
+    "selected_episode_count": 95,
+    "unique_episode_count": 95,
+    "visible_source_episode_count": 301,
+    "missing_or_empty_required_files": [],
+    "required_file_types_checked_per_episode": 15,
+    "uniform_hand_pose_schema_episode_count": 95,
+    "hand_pose_total_source_rows": 67831
+  },
+  "requested_conversion": {
+    "fps": 10,
+    "action_horizon": 50,
+    "max_alignment_ms": 100,
+    "max_hand_age_ms": 100,
+    "hand_alignment": "nearest",
+    "source_fps_values": [60]
+  },
+  "converter_artifacts": {
+    "full_timeline": {
+      "path": "/home/dzq/data_deal/conversion_tools/umi_folder_to_lerobot.py",
+      "sha256": "34c5f6a32aee48a8e2f15d25d314c7b7359a674c753d00eb6f31e1e6024e9ce4"
+    },
+    "strict": {
+      "path": "/home/dzq/data_deal/conversion_tools/umi_folder_to_lerobot.py.pre_full_timeline_20260902",
+      "sha256": "45d90f403f7ea0214cbdf12412b70f59b5c4a6ab4cf4e3a944925ffdc6e92e9b"
+    }
+  },
+  "full_timeline_preflight": {
+    "method": "Called the current converter collect_plans with the exact allowlist supplied in memory; no dataset target was created.",
+    "selected_episode_count": 95,
+    "planned_episode_count": 95,
+    "plan_failure_count": 0,
+    "planned_output_rows": 11348,
+    "output_rows_with_alignment_valid_false": 115,
+    "output_alignment_over_100ms_counts": {
+      "cam0": 4,
+      "cam1": 6,
+      "left_hand": 35,
+      "right_hand": 78
+    },
+    "output_max_abs_alignment_ms": {
+      "cam0": 115.812087,
+      "cam1": 111.271087,
+      "left_hand": 207.581511,
+      "right_hand": 299.582666
+    },
+    "alignment_count_note": "Per-source counts can overlap in the same output row; they are not additive.",
+    "known_issue": "reconstruct_hand_pose resets each hand trajectory to identity at an invalid adjacent transition, but full-timeline make_plan still computes shared-anchor actions across those resets. Alignment flags are audit outputs, not an automatic exclusion or action mask."
+  },
+  "strict_preflight": {
+    "method": "Loaded the pre_full_timeline converter backup as a separate in-memory Python module and called collect_plans with the same 95-entry allowlist and conversion arguments.",
+    "selected_episode_count": 95,
+    "planned_episode_count": 85,
+    "planned_output_rows": 9995,
+    "failure_count": 10,
+    "failure_category": "multiple_valid_runs",
+    "failure_episode_ids": [
+      "20260908_171356_196236498_86862",
+      "20260908_171920_199894486_86862",
+      "20260908_172448_969727935_86862",
+      "20260908_173008_477321212_86862",
+      "20260908_173514_363156274_86862",
+      "20260908_173536_630832952_86862",
+      "20260908_181618_164061991_96413",
+      "20260908_182238_803632672_96413",
+      "20260908_182257_037984890_96413",
+      "20260908_190437_866038415_104264"
+    ],
+    "output_alignment_over_100ms_counts": {
+      "cam0": 0,
+      "cam1": 0,
+      "left_hand": 0,
+      "right_hand": 0
+    },
+    "output_max_abs_alignment_ms": {
+      "cam0": 91.565198,
+      "cam1": 91.013198,
+      "left_hand": 98.778376,
+      "right_hand": 98.92141
+    },
+    "interpretation": "85 plans is a diagnostic partial result. The strict converter refuses the complete requested conversion because 10 selected source episodes have multiple substantial valid runs. No episode has been silently removed or split."
+  },
+  "interior_tracking_failures": [
+    {
+      "episode_id": "20260908_173536_630832952_86862",
+      "side": "right",
+      "source_rows": 751,
+      "invalid_relative_rows_after_first": 54,
+      "invalid_source_row_start_zero_based": 281,
+      "invalid_source_row_end_zero_based_inclusive": 334,
+      "invalid_start_seconds_from_first_pose": 4.683333333,
+      "invalid_end_seconds_from_first_pose": 5.566666667,
+      "first_frame_number": 199616,
+      "last_frame_number": 200366,
+      "left_effective_valid_rows": 750,
+      "right_effective_valid_rows": 696,
+      "left_reconstruction_segments": 1,
+      "right_reconstruction_segments": 55
+    },
+    {
+      "episode_id": "20260908_181618_164061991_96413",
+      "side": "right",
+      "source_rows": 790,
+      "invalid_relative_rows_after_first": 35,
+      "invalid_source_row_start_zero_based": 578,
+      "invalid_source_row_end_zero_based_inclusive": 612,
+      "invalid_start_seconds_from_first_pose": 9.633333334,
+      "invalid_end_seconds_from_first_pose": 10.2,
+      "first_frame_number": 346108,
+      "last_frame_number": 346897,
+      "left_effective_valid_rows": 789,
+      "right_effective_valid_rows": 754,
+      "left_reconstruction_segments": 1,
+      "right_reconstruction_segments": 36
+    }
+  ],
+  "calibration_spot_check": {
+    "generator_path": "/home/dzq/data_deal/controller_to_hand_pose_v2.py",
+    "generator_sha256": "75c55a75fed3fc2ef8bc1ac434e0cbba22cf8e66af4067f2a42c0fad7b224c70",
+    "documentation_path": "/home/dzq/data_deal/README.controller_to_hand_pose_v2.md",
+    "calibration_id": "test_true_xy_aligned_20260909",
+    "side_map": "identity",
+    "target_origin_x_m": -0.042,
+    "delta_definition": "inverse(T_world_target_previous) @ T_world_target_current",
+    "target_pose_definition": "T_world_controller @ T_controller_hand @ Trans(-0.042, 0, 0)",
+    "quaternion_order": "xyzw",
+    "method": "For four selected episodes, called the current v2 script parse_args defaults, load_calibration(None), load_hand_frames and relative_rows entirely in memory; compared every numeric value and row count to existing camera/hand_pose.csv.",
+    "samples": [
+      {
+        "episode_id": "20260908_170805_333295581_86862",
+        "rows": 749,
+        "same_row_count": true,
+        "max_numeric_difference": 0.0
+      },
+      {
+        "episode_id": "20260908_173536_630832952_86862",
+        "rows": 751,
+        "same_row_count": true,
+        "max_numeric_difference": 0.0
+      },
+      {
+        "episode_id": "20260908_181618_164061991_96413",
+        "rows": 790,
+        "same_row_count": true,
+        "max_numeric_difference": 0.0
+      },
+      {
+        "episode_id": "20260908_195847_587439715_132696",
+        "rows": 585,
+        "same_row_count": true,
+        "max_numeric_difference": 0.0
+      }
+    ],
+    "scope_limit": "This verifies agreement with current calibration script defaults for the four sampled episodes, not independent physical robot flange calibration."
+  },
+  "limitations": [
+    "No raw source file was rewritten, interpolated, deleted, or replaced.",
+    "The preflight validates layouts, CSV data, timestamps, and declared media sizes through converter planning; it does not complete video encoding or decode every frame.",
+    "The 10 strict failures require an explicit processing decision before training a dataset intended to preserve the entire selected set while respecting the 100ms and pose-continuity constraints."
+  ]
+}
